@@ -1,0 +1,106 @@
+{
+  "id": "quest_objectives",
+  "compatibility": [
+    "TrinityMaster"
+  ],
+  "name": "Quest Objectives",
+  "single_solution_name": "{name} objectives",
+  "multi_solution_name": "Multiple quests objectives",
+  "description": "Quest objectives (kill, collect, interact...). One row per objective.",
+  "table_name": "quest_objectives",
+  "table_index_name": "QuestID",
+  "record_mode": "MultiRecord",
+  "group_name": "Quests",
+  "reload_command": "reload quest_template",
+  "picker": "QuestParameter",
+  "icon_path": "Icons/document_quest.png",
+  "primary_key": [
+    "ID"
+  ],
+  "sort_by": [
+    "QuestID",
+    "Order"
+  ],
+  "groups": [
+    {
+      "group_name": "Objectives",
+      "fields": [
+        {
+          "name": "ID",
+          "db_column_name": "ID",
+          "value_type": "uint"
+        },
+        {
+          "name": "Quest ID",
+          "db_column_name": "QuestID",
+          "value_type": "QuestParameter"
+        },
+        {
+          "name": "Type",
+          "db_column_name": "Type",
+          "value_type": "uint"
+        },
+        {
+          "name": "Order",
+          "db_column_name": "Order",
+          "value_type": "uint"
+        },
+        {
+          "name": "Storage Index",
+          "db_column_name": "StorageIndex",
+          "value_type": "int"
+        },
+        {
+          "name": "Object ID",
+          "db_column_name": "ObjectID",
+          "value_type": "int"
+        },
+        {
+          "name": "Amount",
+          "db_column_name": "Amount",
+          "value_type": "int"
+        },
+        {
+          "name": "Conditional Amount",
+          "db_column_name": "ConditionalAmount",
+          "value_type": "int"
+        },
+        {
+          "name": "Flags",
+          "db_column_name": "Flags",
+          "value_type": "uint"
+        },
+        {
+          "name": "Flags2",
+          "db_column_name": "Flags2",
+          "value_type": "uint"
+        },
+        {
+          "name": "Progress Bar Weight",
+          "db_column_name": "ProgressBarWeight",
+          "value_type": "float"
+        },
+        {
+          "name": "Parent Objective ID",
+          "db_column_name": "ParentObjectiveID",
+          "value_type": "int"
+        },
+        {
+          "name": "Visible",
+          "db_column_name": "Visible",
+          "value_type": "uint"
+        },
+        {
+          "name": "Description",
+          "db_column_name": "Description",
+          "value_type": "string"
+        },
+        {
+          "name": "Verified Build",
+          "db_column_name": "VerifiedBuild",
+          "value_type": "int"
+        }
+      ]
+    }
+  ]
+}
