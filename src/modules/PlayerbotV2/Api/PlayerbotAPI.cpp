@@ -8551,6 +8551,14 @@ Result API::give_item(uint32 entry, uint16 count)
     return p_->StoreNewItem(dest, entry, true) ? Result::Ok : Result::ServerRefused;
 }
 
+Result API::remove_item(uint32 entry, uint16 count)
+{
+    if (!p_) return Result::Other;
+    if (!entry || !count) return Result::InvalidTarget;
+    p_->DestroyItemCount(entry, count, true);   // 0 destroyed = the bot had none; fine for cleanup
+    return Result::Ok;
+}
+
 Result API::accept_shared_quest()
 {
     last_quest_refusal_ = QuestRefusal::None;

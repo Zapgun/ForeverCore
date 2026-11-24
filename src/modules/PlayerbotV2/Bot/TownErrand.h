@@ -305,10 +305,13 @@ struct State
     std::uint8_t  tool_bag = 0xFF;                // the bag slot the profession tool came out of for the station show
     std::uint8_t  tool_slot = 0xFF;               // (the swap put the weapon there: equipping it back restores the kit)
     bool          tool_given = false;             // the missing tool was conjured into the bags once this errand
+    bool          stock_given = false;            // reagents for the recipe were conjured once this errand
+    std::uint32_t stock[8] = {};                  // entries of the working stock (reagents + product) to remove at the end
+    std::uint8_t  stock_n = 0;
     Recent        recent;
 
     void Clear() { kind = Kind::None; key = 0; place = 0; entry = 0; phase = 0; near_player_ms = 0; issued = false; leaving = false; prog_ms = 0;
-                   focus_type = 0; next_use_ms = 0; work_emote = false; tool_bag = tool_slot = 0xFF; tool_given = false; }
+                   focus_type = 0; next_use_ms = 0; work_emote = false; tool_bag = tool_slot = 0xFF; tool_given = false; stock_given = false; stock_n = 0; }
 };
 
 // Has the walking bot stopped getting closer? It counts as progress to move `yards` in `window_ms`.

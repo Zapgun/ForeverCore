@@ -113,6 +113,7 @@ struct UseItemIntent         { uint8 bag, slot; ObjectGuid target; };
 struct UseItemByEntryIntent  { uint32 item_entry; ObjectGuid target; };
 struct EquipItemIntent       { uint8 from_bag, from_slot; uint8 to_slot; };
 struct GiveItemIntent        { uint32 item_entry; uint16 count; };                        // conjure-to-bags (profession tool at its station)
+struct RemoveItemIntent      { uint32 item_entry; uint16 count; };                        // destroy up to count of an entry (station stock cleanup)
 struct LootIntent            { ObjectGuid corpse_or_object; bool quest_only = false; };   // quest_only: take only this bot's quest drops
 struct ReleaseCorpseIntent   {};
 struct ReviveAtCorpseIntent  {};
@@ -652,7 +653,7 @@ using IntentBody = std::variant<
     DismissPetIntent, SetStandStateIntent, UnstuckIntent, CancelAuraIntent,
     MoveToIntent, TeleportToIntent, StopMovementIntent, JumpIntent,
     MountIntent, DismountIntent, HearthIntent, FollowIntent,
-    UseItemIntent, UseItemByEntryIntent, EquipItemIntent, GiveItemIntent, LootIntent,
+    UseItemIntent, UseItemByEntryIntent, EquipItemIntent, GiveItemIntent, RemoveItemIntent, LootIntent,
     ReleaseCorpseIntent, ReviveAtCorpseIntent,
     ReclaimCorpseIntent, SpiritResurrectIntent, AcceptRezIntent,
     QuestAcceptIntent, QuestCompleteIntent, QuestAbandonIntent,
@@ -721,7 +722,7 @@ inline size_t IntentKind(Intent const& i) { return i.body.index(); }
 // wedge read as "Dismount | ServerRefused" — diagnosed as the wrong bug on
 // 2026-06-10). The static_asserts force this list to be updated whenever an
 // alternative is added to / removed from IntentBody.
-static_assert(std::variant_size_v<IntentBody> == 102,
+static_assert(std::variant_size_v<IntentBody> == 103,
               "IntentBody changed — update IntentKindName() below to match.");
 inline char const* IntentKindName(size_t kind)
 {
@@ -731,7 +732,7 @@ inline char const* IntentKindName(size_t kind)
         "DismissPet", "SetStandState", "Unstuck", "CancelAura",
         "MoveTo", "TeleportTo", "StopMovement", "Jump",
         "Mount", "Dismount", "Hearth", "Follow",
-        "UseItem", "UseItemByEntry", "EquipItem", "GiveItem", "Loot",
+        "UseItem", "UseItemByEntry", "EquipItem", "GiveItem", "RemoveItem", "Loot",
         "ReleaseCorpse", "ReviveAtCorpse",
         "ReclaimCorpse", "SpiritResurrect", "AcceptRez",
         "QuestAccept", "QuestComplete", "QuestAbandon",

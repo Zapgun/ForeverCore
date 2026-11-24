@@ -1097,6 +1097,8 @@ static void EndErrand(BotSnapshotView const& s, BotIntentEmitter& emit, TE::Stat
         emit.perform_emote(EMOTE_STATE_NONE);   // a looped work emote stops when the bot moves off
     if (st.tool_bag != 0xFF)
         emit.equip_item(st.tool_bag, st.tool_slot, EQUIPMENT_SLOT_MAINHAND);   // the tool back in the bag, the weapon out
+    for (uint8 i = 0; i < st.stock_n; ++i)
+        emit.remove_item(st.stock[i]);   // finished mats and the items made — a worker's kit, not a hoard
     if (st.place) TE::Spots::Get().Release(st.place, s.bot_id());
     if (st.key) st.recent.add(st.key);
     if (done) ++st.errands;
@@ -1215,9 +1217,10 @@ static bool FocusInReach(BotSnapshotView const& s, uint32 focus_type)
     return false;
 }
 
-// The best recipe the bot can really craft at this station's focus type: needs the focus, still gives skill
-// (orange over yellow over green), not on cooldown, reagents in the bags. 0 = nothing to make here — the
-// station show then falls back to the work emote.
+// The best recipe the bot knows for this station's focus type: needs the focus, still gives skill (orange over
+// yellow over green), not on cooldown. Reagents are NOT part of the pick — the caller stocks the bags for the
+// chosen recipe (a worker's kit is conjured once per visit), so a recipe it knows always leads to a real cast.
+// 0 = no usable recipe at all — the station show then falls back to the work emote.
 static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type)
 {
     if (!FocusInReach(s, focus_type))
@@ -1234,7 +1237,7 @@ static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type)
         uint16 const cur = s.skill_value(meta->skill_line_id);
         RecipeColor const c = ResolveRecipeColor(spell_id, cur);
         if (c == RecipeColor::Gray || c == RecipeColor::Unknown) continue;
-        if (!s.is_ready(spell_id) || !s.has_reagents(spell_id)) continue;
+        if (!s.is_ready(spell_id)) continue;
         bool const better = best == 0 || uint8(c) < uint8(best_color) || (c == best_color && cur < best_skill);
         if (better) { best = spell_id; best_color = c; best_skill = cur; }
     }
@@ -1273,6 +1276,7 @@ static void EquipStationTool(BotSnapshotView const& s, BotIntentEmitter& emit, T
     {
         emit.give_item(tool_entry);
         st.tool_given = true;
+        TC_LOG_INFO("playerbot.v2", "[town] {} has no tool: item {} given for the {}", s.name(), tool_entry, TE::KindName(st.kind));
     }
 }
 
@@ -1288,13 +1292,40 @@ static void CraftUse(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& emit
     if (TE::Cfg().craft_cast)
         if (uint32 const spell = PickCraftSpell(s, st.focus_type))
         {
-            if (st.work_emote)
+            if (s.has_reagents(spell))
             {
-                emit.perform_emote(EMOTE_STATE_NONE);
-                st.work_emote = false;
+                if (st.work_emote)
+                {
+                    emit.perform_emote(EMOTE_STATE_NONE);
+                    st.work_emote = false;
+                }
+                if (s.bot_id() % 16u == 0u)
+                    TC_LOG_INFO("playerbot.v2", "[town] {} crafts spell {} at the {}", s.name(), spell, TE::KindName(st.kind));
+                emit.cast(spell);
+                return;
             }
-            emit.cast(spell);
-            return;
+            // The stock of the trade: enough reagents for a few casts, conjured into the bags once per visit
+            // like the tool (a smith's bag holds the bars). EndErrand removes what the visit leaves — reagents
+            // over and the items made — so the bags stay a working kit, not a hoard.
+            if (!st.stock_given)
+            {
+                st.stock_given = true;
+                if (SpellInfo const* si = sSpellMgr->GetSpellInfo(spell, DIFFICULTY_NONE))
+                {
+                    for (uint8 r = 0; r < MAX_SPELL_REAGENTS; ++r)
+                        if (si->Reagent[r] > 0 && si->ReagentCount[r] > 0)
+                        {
+                            emit.give_item(uint32(si->Reagent[r]), uint16(si->ReagentCount[r] * 3u));
+                            if (st.stock_n < std::size(st.stock)) st.stock[st.stock_n++] = uint32(si->Reagent[r]);
+                        }
+                    for (SpellEffectInfo const& eff : si->GetEffects())
+                        if (eff.Effect == SPELL_EFFECT_CREATE_ITEM && eff.ItemType && st.stock_n < std::size(st.stock))
+                            st.stock[st.stock_n++] = uint32(eff.ItemType);
+                    if (s.bot_id() % 16u == 0u)
+                        TC_LOG_INFO("playerbot.v2", "[town] {} stocked for spell {} at the {}", s.name(), spell, TE::KindName(st.kind));
+                }
+            }
+            // This beat falls to the emote; the next one has the stock and casts for real.
         }
     if (!st.work_emote)
         if (uint32 const e = TE::WorkEmoteFor(st.kind))

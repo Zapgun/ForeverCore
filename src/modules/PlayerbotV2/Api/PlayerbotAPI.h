@@ -747,6 +747,10 @@ public:
     // station). InvalidTarget = unknown entry; ServerRefused = bags full.
     Result give_item(uint32 entry, uint16 count);
 
+    // Destroy up to `count` of an item entry from the bot's inventory (the
+    // working stock a craft errand leaves — reagents over, items made).
+    Result remove_item(uint32 entry, uint16 count);
+
     // ---- Group loot --------------------------------------------------
     // Cast the bot's vote on a master/group loot roll. `loot_object` is
     // the loot source guid (creature corpse / GO chest), `loot_list_id`
