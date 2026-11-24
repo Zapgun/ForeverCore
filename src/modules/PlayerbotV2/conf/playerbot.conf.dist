@@ -371,7 +371,8 @@ Playerbot.World.IdleSwapCooldownSec = 180
 Playerbot.World.TownLife = 1
 
 # Town errands: a capital's residents run from place to place across the city (the auction house, the bank, their class trainer, the
-# inn, a mailbox, the flight master, a vendor, now and then the city gate), stop there LingerMinSec..LingerMaxSec facing the NPC and run
+# inn, a mailbox, the flight master, a vendor, a craft station, now and then the city gate), stop there a while — LingerMinSec..
+# LingerMaxSec for a plain errand, the per-kind ranges below for the bank, the auction house and a craft station — and run
 # on to the next. Each walk is one pathed move, so they run smooth lines through the streets instead of short hops with a stop and a turn.
 # 0 = off (the old NPC-to-NPC visits within 60 yards and the random wander).
 Playerbot.World.Town.Errands = 1
@@ -379,6 +380,26 @@ Playerbot.World.Town.Errands = 1
 Playerbot.World.Town.ErrandRadius = 300
 Playerbot.World.Town.LingerMinSec = 4
 Playerbot.World.Town.LingerMaxSec = 12
+# A stop at the bank or the auction house is a longer one: a player paging through bags or the auction list.
+Playerbot.World.Town.LingerBankMinSec = 20
+Playerbot.World.Town.LingerBankMaxSec = 40
+Playerbot.World.Town.LingerAhMinSec = 20
+Playerbot.World.Town.LingerAhMaxSec = 40
+# Working at a craft station (anvil/forge, cooking fire, loom, moonwell) takes the longest of all.
+Playerbot.World.Town.LingerCraftMinSec = 45
+Playerbot.World.Town.LingerCraftMaxSec = 90
+# 1 = a bot at a craft station really casts a recipe it knows that needs that station (and the reagents for);
+# 0 = show only: it plays a looped work emote instead.
+Playerbot.World.Town.CraftCast = 1
+# Fixture places: the bots a living city never leaves empty. While a kind's places hold fewer than its target,
+# the next errand of a resident is drawn there before the usual weighted pick (bots on their way already count,
+# and SpotCap still applies, so the fill cannot over-shoot and the crowd keeps rotating). 0 = no fixture for the kind.
+Playerbot.World.Town.Fixture.Bank = 3
+Playerbot.World.Town.Fixture.Ah = 3
+Playerbot.World.Town.Fixture.Forge = 2
+Playerbot.World.Town.Fixture.Cookfire = 1
+Playerbot.World.Town.Fixture.Loom = 0
+Playerbot.World.Town.Fixture.Moonwell = 0
 # Crowd caps: bots at one place at once (a bank, an auction house, a trainer), at one inn (resting or on an errand) and at one mailbox.
 # A bot that finds a place full goes somewhere else. InnCap = 0 or MailboxCap = 0 turns that show off.
 Playerbot.World.Town.SpotCap = 5
