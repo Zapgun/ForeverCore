@@ -104,6 +104,19 @@ TEST_CASE("Bots at one place stand side by side on the near side", "[ClassicTown
     REQUIRE(seen.size() == 5);
 }
 
+TEST_CASE("A place with a facing fans its bots out front; one without uses the approach side", "[ClassicTownErrand]")
+{
+    float sx, sy;
+    // A banker facing east (orientation 0): the queue stands in front, not behind.
+    StandPoint(0.f, 0.f, -50.f, 0.f, 4.f, 0, sx, sy, 0.0f);
+    REQUIRE(sx > 3.9f);
+    REQUIRE(std::fabs(sy) < 0.1f);
+    // No facing stored (-1 = none): the side the bot approaches from (+x) is used.
+    StandPoint(0.f, 0.f, 50.f, 0.f, 4.f, 0, sx, sy, -1.0f);
+    REQUIRE(sx > 3.9f);
+    REQUIRE(std::fabs(sy) < 0.1f);
+}
+
 TEST_CASE("A walk that stops getting closer is stalled after the window", "[ClassicTownErrand]")
 {
     State st;
