@@ -1,6 +1,6 @@
--- Migration: 9002_playerbot_rpg_names_data
+-- Migration: 0064_playerbot_rpg_names_data
 -- Date:    2026-11-23
--- Purpose: Seed data for 9001_playerbot_rpg_names: curated lore first names
+-- Purpose: Seed data for 0063_playerbot_rpg_names: curated lore first names
 --          (995 rows across all 10 races x 2 sexes, incl. Skyborne races 95/96),
 --          404 whole surnames and 551 compound surname parts.
 --          All INSERT IGNORE - safe to re-run.
@@ -640,5 +640,5 @@ INSERT IGNORE INTO {SHARED}.`playerbots_surname_parts` (`part`,`half`,`race`) VA
 ('wright',1,5);
 
 INSERT INTO {SHARED}.playerbot_v2_schema_version (version, sha256) VALUES
-    (9002, REPEAT('0', 64))
+    (64, REPEAT('0', 64))
 ON DUPLICATE KEY UPDATE applied_at = CURRENT_TIMESTAMP;

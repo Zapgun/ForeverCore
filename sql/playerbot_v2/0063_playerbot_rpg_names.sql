@@ -1,4 +1,4 @@
--- Migration: 9001_playerbot_rpg_names
+-- Migration: 0063_playerbot_rpg_names
 -- Date:    2026-11-23
 -- Purpose: Schema for race/sex-appropriate RPG names for V2 bot characters
 --          (the "RPG names" feature; code in Fleet/BotNamePool.cpp):
@@ -31,7 +31,7 @@
 CREATE TABLE IF NOT EXISTS {SHARED}.`playerbots_race_names` (
   `name_id` int unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(12) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id; 0 = any race',
+  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id, 0 = any race',
   `gender` tinyint unsigned NOT NULL DEFAULT '2' COMMENT '0=male, 1=female, 2=neutral',
   `is_used` tinyint(1) NOT NULL DEFAULT '0',
   `used_by_guid` bigint unsigned DEFAULT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS {SHARED}.`playerbots_race_names` (
 CREATE TABLE IF NOT EXISTS {SHARED}.`playerbots_surnames` (
   `surname_id` int unsigned NOT NULL AUTO_INCREMENT,
   `surname` varchar(48) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id; 0 = any race',
+  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id, 0 = any race',
   `gender` tinyint unsigned NOT NULL DEFAULT '2' COMMENT '0=male, 1=female, 2=neutral',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`surname_id`),
@@ -58,15 +58,15 @@ CREATE TABLE IF NOT EXISTS {SHARED}.`playerbots_surname_parts` (
   `part_id` int unsigned NOT NULL AUTO_INCREMENT,
   `part` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `half` tinyint unsigned NOT NULL COMMENT '0=prefix, 1=suffix',
-  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id; 0 = any race',
+  `race` tinyint unsigned NOT NULL DEFAULT '0' COMMENT 'ChrRaces id, 0 = any race',
   PRIMARY KEY (`part_id`),
   UNIQUE KEY `uk_part` (`part`,`half`,`race`),
   KEY `idx_race` (`race`,`half`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Seed data is in 9002_playerbot_rpg_names_data.sql
+-- Seed data is in 0064_playerbot_rpg_names_data.sql
 -- 
 
 INSERT INTO {SHARED}.playerbot_v2_schema_version (version, sha256) VALUES
-    (9001, REPEAT('0', 64))
+    (63, REPEAT('0', 64))
 ON DUPLICATE KEY UPDATE applied_at = CURRENT_TIMESTAMP;
