@@ -297,10 +297,13 @@ struct State
     std::uint32_t focus_type = 0;                 // craft kinds: the station's SpellFocusObject id, for matching recipes
     std::uint32_t next_use_ms = 0;                // the next "use the place" beat (craft cast, work emote, mid-linger fidget)
     bool          work_emote = false;             // a looped work emote is up: clear it when the errand ends
+    std::uint8_t  tool_bag = 0xFF;                // the bag slot the profession tool came out of for the station show
+    std::uint8_t  tool_slot = 0xFF;               // (the swap put the weapon there: equipping it back restores the kit)
+    bool          tool_given = false;             // the missing tool was conjured into the bags once this errand
     Recent        recent;
 
     void Clear() { kind = Kind::None; key = 0; place = 0; entry = 0; phase = 0; near_player_ms = 0; issued = false; leaving = false; prog_ms = 0;
-                   focus_type = 0; next_use_ms = 0; work_emote = false; }
+                   focus_type = 0; next_use_ms = 0; work_emote = false; tool_bag = tool_slot = 0xFF; tool_given = false; }
 };
 
 // Has the walking bot stopped getting closer? It counts as progress to move `yards` in `window_ms`.

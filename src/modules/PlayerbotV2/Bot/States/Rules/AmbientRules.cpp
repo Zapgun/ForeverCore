@@ -35,6 +35,7 @@
 #include "Combat/Apl/ApClassicHeal.h"   // idle:kind_heal: the class heal and its rank
 #include "ClassicSpec.h"                // Classic::IsSingleSpecClass
 #include "SharedDefines.h"
+#include "Player.h"   // EQUIPMENT_SLOT_MAINHAND for the station-tool swap
 #include "GameObjectData.h"
 #include "ObjectMgr.h"
 #include "SpellInfo.h"
@@ -1071,13 +1072,14 @@ static void TownDests(BotSnapshotView const& s, float bx, float by, float bz, st
         out.push_back({ TE::Kind::Mailbox, n.spawn_id, 0u, n.x, n.y, n.z, TE::BaseWeight(TE::Kind::Mailbox) });
     });
     // The craft stations (anvil, forge, cooking fire, loom, moonwell) the town's gameobjects carry: a bot stops
-    // there to work like a player does. A bot with the matching trade skill is drawn to its own station.
+    // there to work like a player does — but only a bot with the trade for it, so the smith at the anvil is a
+    // real smith (the tool in hand, a recipe it can really cast), never a priest miming.
     ::Playerbot::V2::Travel::TownNpcIndex::Instance().ForEachFocusNear(s.map_id(), bx, by, c.radius, [&](::Playerbot::V2::Travel::TownNpc const& n)
     {
         if (!n.focus_kind || std::fabs(n.z - bz) > kLayerYards) return;
         TE::Kind const k = TE::Kind(n.focus_kind);
-        float const boost = CraftKindMatch(k, s) ? 2.5f : 1.0f;
-        out.push_back({ k, n.spawn_id, 0u, n.x, n.y, n.z, TE::BaseWeight(k) * boost, n.focus_type });
+        if (!CraftKindMatch(k, s)) return;
+        out.push_back({ k, n.spawn_id, 0u, n.x, n.y, n.z, TE::BaseWeight(k) * 2.5f, n.focus_type });
     });
     if (c.exits)
     {
@@ -1092,6 +1094,8 @@ static void EndErrand(BotSnapshotView const& s, BotIntentEmitter& emit, TE::Stat
 {
     if (st.work_emote)
         emit.perform_emote(EMOTE_STATE_NONE);   // a looped work emote stops when the bot moves off
+    if (st.tool_bag != 0xFF)
+        emit.equip_item(st.tool_bag, st.tool_slot, EQUIPMENT_SLOT_MAINHAND);   // the tool back in the bag, the weapon out
     if (st.place) TE::Spots::Get().Release(st.place, s.bot_id());
     if (st.key) st.recent.add(st.key);
     if (done) ++st.errands;
@@ -1125,7 +1129,10 @@ static bool TakeErrand(BotSnapshotView const& s, TE::State& st, TE::Dest const& 
     st.focus_type = d.focus_type;
     st.leaving = leaving;
     st.nx = d.x; st.ny = d.y; st.nz = d.z;
-    float const ring = d.kind == TE::Kind::Mailbox ? 2.5f : d.kind == TE::Kind::Exit ? 3.0f + float(slot % 6u) * 1.5f : 3.5f + float(slot / 5u) * 1.5f;
+    float ring = 3.5f + float(slot / 5u) * 1.5f;
+    if      (d.kind == TE::Kind::Mailbox) ring = 2.5f;
+    else if (d.kind == TE::Kind::Exit)    ring = 3.0f + float(slot % 6u) * 1.5f;
+    else if (TE::IsCraftKind(d.kind))     ring = 2.8f + float(slot % 3u) * 0.7f;   // right at the anvil: two smiths share the fire
     TE::StandPoint(d.x, d.y, bx, by, ring, slot, st.tx, st.ty);
     st.tz = d.z;
     st.phase = 1;
@@ -1233,11 +1240,48 @@ static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type)
     return best;
 }
 
+// The tool of the trade in hand while it works: a smith hammers with a hammer, not a sword and an empty fist.
+// The equip swap leaves the weapon in the tool's bag slot, so the same equip_item call in EndErrand puts the
+// battle kit back on. A bot set up before the tool grant (DoLearnProfessions) has the skill but no tool: it is
+// conjured into the bags once (a worker carries their own), and the next use-beat equips it.
+static uint32 StationToolEntry(TE::Kind kind, BotSnapshotView const& s)
+{
+    if (kind != TE::Kind::Forge) return 0;   // cookfire, loom, moonwell need no tool in vanilla
+    if (s.has_skill(164)) return 5956;       // Blacksmith Hammer
+    if (s.has_skill(202)) return 6219;       // Arclight Spanner
+    if (s.has_skill(186)) return 2901;       // Mining Pick — smelting
+    return 0;
+}
+
+static void EquipStationTool(BotSnapshotView const& s, BotIntentEmitter& emit, TE::State& st)
+{
+    if (st.tool_bag != 0xFF) return;   // already in hand
+    uint32 const tool_entry = StationToolEntry(st.kind, s);
+    if (!tool_entry) return;
+    for (auto const& it : s.raw().inventory.bag_items)
+        if (it.entry == tool_entry)
+        {
+            if (emit.equip_item(it.bag, it.slot, EQUIPMENT_SLOT_MAINHAND))
+            {
+                st.tool_bag = it.bag;
+                st.tool_slot = it.slot;
+            }
+            return;
+        }
+    if (!st.tool_given)
+    {
+        emit.give_item(tool_entry);
+        st.tool_given = true;
+    }
+}
+
 // A bot at a craft station "uses" it every 8-15 s of the linger: cast a known recipe that needs this focus when
 // it can (the real smith hammering is the most convincing look there is; CraftCast=0 turns that off), else hold
 // the looped work emote for the station.
 static void CraftUse(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& emit, TE::State& st, uint32 now_ms)
 {
+    if (st.tool_bag == 0xFF)
+        EquipStationTool(s, emit, st);   // still empty-handed: the conjured tool may have just landed
     if (now_ms < st.next_use_ms) return;
     st.next_use_ms = now_ms + 8000u + uint32(ai.rng().int_range(0, 70)) * 100u;
     if (TE::Cfg().craft_cast)
@@ -1329,7 +1373,24 @@ static void ArriveErrand(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& 
     // The first "use the place" beat: a craft station's first cast or work emote lands a breath after arrival; a
     // bank or auction-house stop repeats the face-and-talk gesture about halfway through the linger.
     if (TE::IsCraftKind(st.kind))
+    {
+        // Right at the station and turned to it: the nearest gameobject of the station's focus type is the anvil
+        // the bot works at (face_target resolves gameobjects — the same SetFacingToObject the spell path uses).
+        ObjectGuid station;
+        float best_d2 = 12.0f * 12.0f;
+        for (auto const& go : s.raw().world_objects.nearby_objects)
+        {
+            GameObjectTemplate const* info = sObjectMgr->GetGameObjectTemplate(go.entry);
+            if (!info || uint32(info->GetSpellFocusType()) != st.focus_type) continue;
+            float const dx = go.x - st.nx, dy = go.y - st.ny;
+            float const d2 = dx * dx + dy * dy;
+            if (d2 < best_d2) { best_d2 = d2; station = go.guid; }
+        }
+        if (!station.IsEmpty())
+            emit.face_target(station);
+        EquipStationTool(s, emit, st);
         st.next_use_ms = now_ms + 2000u + uint32(ai.rng().int_range(0, 20)) * 100u;
+    }
     else if (st.entry)
         st.next_use_ms = now_ms + linger / 2u;
     V2::TownLife::Counters().errands.fetch_add(1, std::memory_order_relaxed);

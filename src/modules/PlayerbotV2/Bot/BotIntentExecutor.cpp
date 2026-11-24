@@ -423,6 +423,7 @@ struct IntentVisitor
     Result operator()(LootRollIntent const& i)         { return api.loot_roll(i.loot_object, i.loot_list_id, i.vote_type); }
     Result operator()(BindHomebindIntent const& i)     { return api.bind_homebind(i.innkeeper); }
     Result operator()(EquipItemIntent const& i)        { return api.equip_item(i.from_bag, i.from_slot, i.to_slot); }
+    Result operator()(GiveItemIntent const& i)         { return api.give_item(i.item_entry, i.count); }
 
     // ---- Subsystem-wrapper handlers (variant-pressure relief) ----
     //

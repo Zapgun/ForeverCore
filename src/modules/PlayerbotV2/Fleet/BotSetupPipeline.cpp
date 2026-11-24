@@ -625,6 +625,22 @@ bool BotSetupPipeline::DoLearnProfessions(Player* bot)
     grant_skill(pair.gather_skill, pair.gather_apprentice);
     grant_skill(pair.craft_skill,  pair.craft_apprentice);
 
+    // The tool of each granted skill in the bags: the real mechanics want it
+    // there (Spell::EffectOpenLock refuses an ore vein without a Mining Pick,
+    // craft spells check for the hammer), and the station show
+    // (idle:town_errand craft lingers) puts it in the bot's hand.
+    auto grant_tool = [&](uint32 entry)
+    {
+        if (!sObjectMgr->GetItemTemplate(entry) || bot->GetItemCount(entry)) return;
+        ItemPosCountVec dest;
+        if (bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, entry, 1) == EQUIP_ERR_OK)
+            bot->StoreNewItem(dest, entry, true);
+    };
+    if (pair.gather_skill == 186) grant_tool(2901);   // Mining Pick
+    if (pair.craft_skill  == 164) grant_tool(5956);   // Blacksmith Hammer
+    if (pair.craft_skill  == 202) grant_tool(6219);   // Arclight Spanner
+    if (pair.gather_skill == 393) grant_tool(7005);   // Skinning Knife
+
     // Secondaries — every bot gets Cooking + Fishing, regardless of class
     // pick. First Aid (skill 129) was removed in BfA 8.0, so it's not
     // granted here even though bandages still exist as items. Apprentice
@@ -634,6 +650,7 @@ bool BotSetupPipeline::DoLearnProfessions(Player* bot)
     if (!bot->HasSpell(818) && sSpellMgr->GetSpellInfo(818, DIFFICULTY_NONE))
         bot->LearnSpell(818, /*dependent=*/false);
     grant_skill(/*Fishing*/  356, 7732);
+    grant_tool(6256);                               // Fishing Pole
 
     // Classic 1.60: vanilla has First Aid (removed only in BfA) and no
     // per-expansion profession skill lines, so a vanilla bot gets First Aid

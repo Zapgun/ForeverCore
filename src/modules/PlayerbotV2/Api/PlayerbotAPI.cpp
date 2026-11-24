@@ -4976,7 +4976,22 @@ Result API::face_target(ObjectGuid target, bool combat)
     if (!p_) return Result::Other;
     if (target.IsEmpty()) return Result::InvalidTarget;
     Unit* u = ObjectAccessor::GetUnit(*p_, target);
-    if (!u) return Result::InvalidTarget;
+    if (!u)
+    {
+        // A station (anvil, cooking fire, loom): the bot at work faces the gameobject. SetFacingToObject
+        // takes any WorldObject; the same already-facing guard as the unit path skips a no-op turn.
+        if (combat) return Result::InvalidTarget;
+        GameObject* go = p_->GetMap() ? p_->GetMap()->GetGameObject(target) : nullptr;
+        if (!go) return Result::InvalidTarget;
+        if (!p_->isMoving())
+        {
+            ClearStaleMoveFlags(p_);
+            float const off = Position::NormalizeOrientation(p_->GetOrientation() - p_->GetAbsoluteAngle(go));
+            if (off > 0.1f && off < 2.0f * float(M_PI) - 0.1f)
+                p_->SetFacingToObject(go, /*force*/ true);
+        }
+        return Result::Ok;
+    }
     if (combat)
     {
         // Combat re-face. The melee swing needs the victim within +-60 degrees
@@ -8523,6 +8538,17 @@ Result API::equip_item(uint8 from_bag, uint8 from_slot, uint8 to_slot)
     const uint16 dst = (uint16(INVENTORY_SLOT_BAG_0) << 8) | to_slot;
     p_->SwapItem(src, dst);
     return Result::Ok;
+}
+
+Result API::give_item(uint32 entry, uint16 count)
+{
+    if (!p_) return Result::Other;
+    if (!entry || !count) return Result::InvalidTarget;
+    if (!sObjectMgr->GetItemTemplate(entry)) return Result::InvalidTarget;
+    ItemPosCountVec dest;
+    if (p_->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, entry, count) != EQUIP_ERR_OK)
+        return Result::ServerRefused;
+    return p_->StoreNewItem(dest, entry, true) ? Result::Ok : Result::ServerRefused;
 }
 
 Result API::accept_shared_quest()

@@ -180,8 +180,15 @@ TEST_CASE("An errand that ends clears its craft-station state", "[ClassicTownErr
     st.focus_type = 7;
     st.next_use_ms = 12345u;
     st.work_emote = true;
+    st.tool_bag = 1;
+    st.tool_slot = 4;
+    st.tool_given = true;
     st.Clear();
     REQUIRE(st.focus_type == 0);
     REQUIRE(st.next_use_ms == 0);
     REQUIRE_FALSE(st.work_emote);
+    // The tool swap is undone before Clear — the reset value is "no tool" (0xFF), not a bag slot.
+    REQUIRE(st.tool_bag == 0xFF);
+    REQUIRE(st.tool_slot == 0xFF);
+    REQUIRE_FALSE(st.tool_given);
 }
