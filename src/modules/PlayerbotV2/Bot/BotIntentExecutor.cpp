@@ -424,7 +424,7 @@ struct IntentVisitor
     Result operator()(BindHomebindIntent const& i)     { return api.bind_homebind(i.innkeeper); }
     Result operator()(EquipItemIntent const& i)        { return api.equip_item(i.from_bag, i.from_slot, i.to_slot); }
     Result operator()(GiveItemIntent const& i)         { return api.give_item(i.item_entry, i.count); }
-    Result operator()(RemoveItemIntent const& i)       { return api.remove_item(i.item_entry, i.count); }
+    Result operator()(LearnSpellIntent const& i)       { return api.learn_spell(i.spell_id); }
 
     // ---- Subsystem-wrapper handlers (variant-pressure relief) ----
     //

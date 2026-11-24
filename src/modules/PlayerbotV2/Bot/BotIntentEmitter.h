@@ -470,8 +470,8 @@ public:
     { return emit(EquipItemIntent{from_bag, from_slot, to_slot}); }
     bool give_item(uint32 entry, uint16 count = 1)
     { return emit(GiveItemIntent{entry, count}); }
-    bool remove_item(uint32 entry, uint16 count = 0xFFFF)
-    { return emit(RemoveItemIntent{entry, count}); }
+    bool learn_spell(uint32 spell_id)
+    { return emit(LearnSpellIntent{spell_id}); }
 
     // Mana break: a mana item is due but a cast is running. Until the item goes out (or 4 s pass) cast()/cast_rank() refuse any
     // spell with a cast time, so the running cast is the last one and the next tick can use the item.

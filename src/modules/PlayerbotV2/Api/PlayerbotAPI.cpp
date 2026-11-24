@@ -8551,12 +8551,13 @@ Result API::give_item(uint32 entry, uint16 count)
     return p_->StoreNewItem(dest, entry, true) ? Result::Ok : Result::ServerRefused;
 }
 
-Result API::remove_item(uint32 entry, uint16 count)
+Result API::learn_spell(uint32 spell_id)
 {
     if (!p_) return Result::Other;
-    if (!entry || !count) return Result::InvalidTarget;
-    p_->DestroyItemCount(entry, count, true);   // 0 destroyed = the bot had none; fine for cleanup
-    return Result::Ok;
+    if (!spell_id || !sSpellMgr->GetSpellInfo(spell_id, DIFFICULTY_NONE)) return Result::InvalidTarget;
+    if (p_->HasSpell(spell_id)) return Result::Ok;
+    p_->LearnSpell(spell_id, /*dependent=*/false);
+    return p_->HasSpell(spell_id) ? Result::Ok : Result::ServerRefused;
 }
 
 Result API::accept_shared_quest()

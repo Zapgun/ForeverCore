@@ -113,7 +113,7 @@ struct UseItemIntent         { uint8 bag, slot; ObjectGuid target; };
 struct UseItemByEntryIntent  { uint32 item_entry; ObjectGuid target; };
 struct EquipItemIntent       { uint8 from_bag, from_slot; uint8 to_slot; };
 struct GiveItemIntent        { uint32 item_entry; uint16 count; };                        // conjure-to-bags (profession tool at its station)
-struct RemoveItemIntent      { uint32 item_entry; uint16 count; };                        // destroy up to count of an entry (station stock cleanup)
+struct LearnSpellIntent      { uint32 spell_id; };                                        // teach a spell (starter recipe at a craft station)
 struct LootIntent            { ObjectGuid corpse_or_object; bool quest_only = false; };   // quest_only: take only this bot's quest drops
 struct ReleaseCorpseIntent   {};
 struct ReviveAtCorpseIntent  {};
@@ -653,7 +653,7 @@ using IntentBody = std::variant<
     DismissPetIntent, SetStandStateIntent, UnstuckIntent, CancelAuraIntent,
     MoveToIntent, TeleportToIntent, StopMovementIntent, JumpIntent,
     MountIntent, DismountIntent, HearthIntent, FollowIntent,
-    UseItemIntent, UseItemByEntryIntent, EquipItemIntent, GiveItemIntent, RemoveItemIntent, LootIntent,
+    UseItemIntent, UseItemByEntryIntent, EquipItemIntent, GiveItemIntent, LearnSpellIntent, LootIntent,
     ReleaseCorpseIntent, ReviveAtCorpseIntent,
     ReclaimCorpseIntent, SpiritResurrectIntent, AcceptRezIntent,
     QuestAcceptIntent, QuestCompleteIntent, QuestAbandonIntent,
@@ -732,7 +732,7 @@ inline char const* IntentKindName(size_t kind)
         "DismissPet", "SetStandState", "Unstuck", "CancelAura",
         "MoveTo", "TeleportTo", "StopMovement", "Jump",
         "Mount", "Dismount", "Hearth", "Follow",
-        "UseItem", "UseItemByEntry", "EquipItem", "GiveItem", "RemoveItem", "Loot",
+        "UseItem", "UseItemByEntry", "EquipItem", "GiveItem", "LearnSpell", "Loot",
         "ReleaseCorpse", "ReviveAtCorpse",
         "ReclaimCorpse", "SpiritResurrect", "AcceptRez",
         "QuestAccept", "QuestComplete", "QuestAbandon",
