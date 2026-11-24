@@ -184,7 +184,7 @@ TEST_CASE("An errand that ends clears its craft-station state", "[ClassicTownErr
     st.tool_slot = 4;
     st.tool_given = true;
     st.stock_given = true;
-    st.stock[0] = 2835; st.stock[1] = 2658; st.stock_n = 2;
+    st.recipe_given = true;
     st.Clear();
     REQUIRE(st.focus_type == 0);
     REQUIRE(st.next_use_ms == 0);
@@ -194,5 +194,5 @@ TEST_CASE("An errand that ends clears its craft-station state", "[ClassicTownErr
     REQUIRE(st.tool_slot == 0xFF);
     REQUIRE_FALSE(st.tool_given);
     REQUIRE_FALSE(st.stock_given);
-    REQUIRE(st.stock_n == 0);
+    REQUIRE_FALSE(st.recipe_given);
 }

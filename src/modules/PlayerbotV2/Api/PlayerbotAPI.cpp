@@ -6794,11 +6794,40 @@ Result API::sell_trash(ObjectGuid npc)
     constexpr uint32 kTightBagThreshold = 3;
     bool const bags_tight = CountFreeBagSlots(p_) <= kTightBagThreshold;
 
+    // Craft surplus: products of recipes the bot knows that aren't also an
+    // input to a known recipe — the smith hawks his sharpening stones, the
+    // cook her baked eggs. Bars / bolts / powders that feed a known recipe
+    // stay as working stock. Conjured outputs (healthstones, mage water)
+    // vendor for nothing — skip them; gear stays under IsBagRot's rules, and
+    // uncommon-or-better products are worth more than the vendor pays.
+    std::unordered_set<uint32> craft_in;
+    std::unordered_set<uint32> craft_out;
+    for (auto const& [sid, ps] : p_->GetSpellMap())
+    {
+        if (ps.state == PLAYERSPELL_REMOVED || !ps.active || ps.disabled) continue;
+        SpellInfo const* si = sSpellMgr->GetSpellInfo(sid, DIFFICULTY_NONE);
+        if (!si) continue;
+        for (SpellEffectInfo const& eff : si->GetEffects())
+            if (eff.Effect == SPELL_EFFECT_CREATE_ITEM && eff.ItemType)
+                craft_out.insert(uint32(eff.ItemType));
+        for (size_t r = 0; r < si->Reagent.size(); ++r)
+            if (si->Reagent[r] > 0)
+                craft_in.insert(uint32(si->Reagent[r]));
+    }
+    for (uint32 const e : craft_in) craft_out.erase(e);
+
     std::vector<Item*> to_sell;
-    p_->ForEachItem(ItemSearchLocation::Inventory, [this, &to_sell, bags_tight](Item* it)
+    p_->ForEachItem(ItemSearchLocation::Inventory, [this, &to_sell, bags_tight, &craft_out](Item* it)
     {
         ItemTemplate const* tmpl = it ? it->GetTemplate() : nullptr;
-        if (IsBagRot(p_, it, tmpl, bags_tight)) to_sell.push_back(it);
+        uint32 const cls = tmpl ? tmpl->GetClass() : 0;
+        if (tmpl && !it->IsNotEmptyBag() && !tmpl->HasFlag(ITEM_FLAG_CONJURED)
+            && tmpl->GetQuality() < ITEM_QUALITY_UNCOMMON
+            && cls != ITEM_CLASS_WEAPON && cls != ITEM_CLASS_ARMOR
+            && craft_out.count(it->GetEntry()))
+            to_sell.push_back(it);
+        else if (IsBagRot(p_, it, tmpl, bags_tight))
+            to_sell.push_back(it);
         return ItemSearchCallbackResult::Continue;
     });
 

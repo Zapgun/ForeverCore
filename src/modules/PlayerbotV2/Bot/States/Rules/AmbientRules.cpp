@@ -1036,8 +1036,8 @@ static bool CraftKindMatch(TE::Kind k, BotSnapshotView const& s)
     {
         case TE::Kind::Forge:    return s.has_skill(164) || s.has_skill(202) || s.has_skill(186);  // blacksmithing, engineering, mining
         case TE::Kind::Cookfire: return s.has_skill(185);                                          // cooking
-        case TE::Kind::Loom:
-        case TE::Kind::Moonwell: return s.has_skill(197);                                          // tailoring
+        case TE::Kind::Loom:     return s.has_skill(197);                                          // tailoring needs no station — the loom is a shop, not a requirement
+        case TE::Kind::Moonwell: return s.skill_value(197) >= 250;                                 // moonwell work starts at Mooncloth (Tailoring 250)
         default:                 return false;
     }
 }
@@ -1096,9 +1096,15 @@ static void EndErrand(BotSnapshotView const& s, BotIntentEmitter& emit, TE::Stat
     if (st.work_emote)
         emit.perform_emote(EMOTE_STATE_NONE);   // a looped work emote stops when the bot moves off
     if (st.tool_bag != 0xFF)
-        emit.equip_item(st.tool_bag, st.tool_slot, EQUIPMENT_SLOT_MAINHAND);   // the tool back in the bag, the weapon out
-    for (uint8 i = 0; i < st.stock_n; ++i)
-        emit.remove_item(st.stock[i]);   // finished mats and the items made — a worker's kit, not a hoard
+        // The swap back: the displaced weapon sits in the tool's bag slot. An empty slot means the
+        // mainhand was empty when the tool went in — nothing to restore, and the emit would just
+        // return InvalidTarget (the tool stays; the next equip pass sorts it).
+        for (auto const& it : s.raw().inventory.bag_items)
+            if (it.bag == st.tool_bag && it.slot == st.tool_slot)
+            {
+                emit.equip_item(st.tool_bag, st.tool_slot, EQUIPMENT_SLOT_MAINHAND);
+                break;
+            }
     if (st.place) TE::Spots::Get().Release(st.place, s.bot_id());
     if (st.key) st.recent.add(st.key);
     if (done) ++st.errands;
@@ -1217,8 +1223,8 @@ static bool FocusInReach(BotSnapshotView const& s, uint32 focus_type)
     return false;
 }
 
-// The best recipe the bot knows for this station's focus type: needs the focus, still gives skill (orange over
-// yellow over green), not on cooldown. Reagents are NOT part of the pick — the caller stocks the bags for the
+// The best recipe the bot knows for this station: needs this focus — or none, a no-station recipe casts
+// anywhere — still gives skill (orange over yellow over green), not on cooldown. Reagents are NOT part of the pick — the caller stocks the bags for the
 // chosen recipe (a worker's kit is conjured once per visit), so a recipe it knows always leads to a real cast.
 // 0 = no usable recipe at all — the station show then falls back to the work emote.
 static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type)
@@ -1233,11 +1239,19 @@ static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type)
         RecipeMeta const* meta = FindRecipeMeta(spell_id);
         if (!meta || s.is_skill_capped(meta->skill_line_id)) continue;
         SpellInfo const* si = sSpellMgr->GetSpellInfo(spell_id, DIFFICULTY_NONE);
-        if (!si || uint32(si->RequiresSpellFocus) != focus_type) continue;
+        if (!si) continue;
+        // The station's own focus — or none: vanilla recipes that need no station (the bolts,
+        // the bandages) cast fine standing anywhere, so a tailor at the loom works for real.
+        uint32 const need_focus = uint32(si->RequiresSpellFocus);
+        if (need_focus != 0 && need_focus != focus_type) continue;
         uint16 const cur = s.skill_value(meta->skill_line_id);
         RecipeColor const c = ResolveRecipeColor(spell_id, cur);
         if (c == RecipeColor::Gray || c == RecipeColor::Unknown) continue;
-        if (!s.is_ready(spell_id)) continue;
+        // Cooldown only — NOT is_ready: is_ready folds in has_reagents, and
+        // missing reagents is precisely the case the caller conjures stock
+        // for. The other readiness gates (casting / GCD / moving) are
+        // re-checked on the cast beat itself.
+        if (s.cd_remaining(spell_id).count() > 0) continue;
         bool const better = best == 0 || uint8(c) < uint8(best_color) || (c == best_color && cur < best_skill);
         if (better) { best = spell_id; best_color = c; best_skill = cur; }
     }
@@ -1257,6 +1271,25 @@ static uint32 StationToolEntry(TE::Kind kind, BotSnapshotView const& s)
     return 0;
 }
 
+// The one starter recipe a station's trade casts from conjured stock, taught lazily at the station via a
+// learn_spell intent — bots set up before DoLearnProfessions' grants (or whose grant missed) still craft
+// for real. Mirrors CraftKindMatch's station -> skill mapping.
+static uint32 StationRecipeEntry(TE::Kind kind, BotSnapshotView const& s)
+{
+    switch (kind)
+    {
+        case TE::Kind::Forge:
+            if (s.has_skill(164)) return 2660;   // Rough Sharpening Stone
+            if (s.has_skill(202)) return 3918;   // Rough Blasting Powder
+            if (s.has_skill(186)) return 2657;   // Smelt Copper
+            return 0;
+        case TE::Kind::Cookfire: return s.has_skill(185) ? 8604 : 0;   // Herb Baked Egg
+        case TE::Kind::Loom:     return s.has_skill(197) ? 2963 : 0;   // Bolt of Linen Cloth
+        case TE::Kind::Moonwell: return s.has_skill(197) ? 18560 : 0;  // Mooncloth
+        default:                  return 0;
+    }
+}
+
 static void EquipStationTool(BotSnapshotView const& s, BotIntentEmitter& emit, TE::State& st)
 {
     if (st.tool_bag != 0xFF) return;   // already in hand
@@ -1272,9 +1305,8 @@ static void EquipStationTool(BotSnapshotView const& s, BotIntentEmitter& emit, T
             }
             return;
         }
-    if (!st.tool_given)
+    if (!st.tool_given && emit.give_item(tool_entry))
     {
-        emit.give_item(tool_entry);
         st.tool_given = true;
         TC_LOG_INFO("playerbot.v2", "[town] {} has no tool: item {} given for the {}", s.name(), tool_entry, TE::KindName(st.kind));
     }
@@ -1285,48 +1317,55 @@ static void EquipStationTool(BotSnapshotView const& s, BotIntentEmitter& emit, T
 // the looped work emote for the station.
 static void CraftUse(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& emit, TE::State& st, uint32 now_ms)
 {
+    if (now_ms < st.next_use_ms) return;
     if (st.tool_bag == 0xFF)
         EquipStationTool(s, emit, st);   // still empty-handed: the conjured tool may have just landed
-    if (now_ms < st.next_use_ms) return;
     st.next_use_ms = now_ms + 8000u + uint32(ai.rng().int_range(0, 70)) * 100u;
     if (TE::Cfg().craft_cast)
         if (uint32 const spell = PickCraftSpell(s, st.focus_type))
         {
             if (s.has_reagents(spell))
             {
-                if (st.work_emote)
+                if (s.is_ready(spell))
                 {
-                    emit.perform_emote(EMOTE_STATE_NONE);
-                    st.work_emote = false;
+                    if (st.work_emote)
+                    {
+                        emit.perform_emote(EMOTE_STATE_NONE);
+                        st.work_emote = false;
+                    }
+                    if (s.bot_id() % 16u == 0u)
+                        TC_LOG_INFO("playerbot.v2", "[town] {} crafts spell {} at the {}", s.name(), spell, TE::KindName(st.kind));
+                    emit.cast(spell);
+                    return;
                 }
-                if (s.bot_id() % 16u == 0u)
-                    TC_LOG_INFO("playerbot.v2", "[town] {} crafts spell {} at the {}", s.name(), spell, TE::KindName(st.kind));
-                emit.cast(spell);
-                return;
             }
             // The stock of the trade: enough reagents for a few casts, conjured into the bags once per visit
-            // like the tool (a smith's bag holds the bars). EndErrand removes what the visit leaves — reagents
-            // over and the items made — so the bags stay a working kit, not a hoard.
-            if (!st.stock_given)
+            // like the tool (a smith's bag holds the bars). What the visit leaves is the worker's kit — the
+            // next station visit casts with it; what it makes the bot sells at its next vendor stop.
+            else if (!st.stock_given)
             {
-                st.stock_given = true;
+                bool all = true;
                 if (SpellInfo const* si = sSpellMgr->GetSpellInfo(spell, DIFFICULTY_NONE))
                 {
                     for (uint8 r = 0; r < MAX_SPELL_REAGENTS; ++r)
                         if (si->Reagent[r] > 0 && si->ReagentCount[r] > 0)
-                        {
-                            emit.give_item(uint32(si->Reagent[r]), uint16(si->ReagentCount[r] * 3u));
-                            if (st.stock_n < std::size(st.stock)) st.stock[st.stock_n++] = uint32(si->Reagent[r]);
-                        }
-                    for (SpellEffectInfo const& eff : si->GetEffects())
-                        if (eff.Effect == SPELL_EFFECT_CREATE_ITEM && eff.ItemType && st.stock_n < std::size(st.stock))
-                            st.stock[st.stock_n++] = uint32(eff.ItemType);
+                            all &= emit.give_item(uint32(si->Reagent[r]), uint16(si->ReagentCount[r] * 3u));
                     if (s.bot_id() % 16u == 0u)
                         TC_LOG_INFO("playerbot.v2", "[town] {} stocked for spell {} at the {}", s.name(), spell, TE::KindName(st.kind));
                 }
+                else
+                    all = true;   // unknown spell — don't retry every beat
+                st.stock_given = all;   // a full intent queue just retries next beat
             }
             // This beat falls to the emote; the next one has the stock and casts for real.
         }
+        // No usable recipe for this station: teach the starter once per visit. Covers bots set up
+        // before DoLearnProfessions' grants — the recipe lands next drain and the next beat picks it.
+        else if (!st.recipe_given)
+            if (uint32 const recipe = StationRecipeEntry(st.kind, s))
+                // Once per visit either way: a recipe already in the book is why the pick came
+                // back empty (grey-capped or on cooldown) — nothing to teach it then.
+                st.recipe_given = s.knows_spell(recipe) ? true : emit.learn_spell(recipe);
     if (!st.work_emote)
         if (uint32 const e = TE::WorkEmoteFor(st.kind))
         {
@@ -1371,10 +1410,10 @@ static void ArriveErrand(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& 
             emit.face_target(u.guid);
             uint64 const low = u.guid.GetCounter();
             bool const in_reach = std::hypot(u.x - bx, u.y - by) <= 5.0f;
-            if (in_reach && (u.npc_flags & UNIT_NPC_FLAG_VENDOR_MASK) && HasGreyJunkItem(s)
+            if (in_reach && (u.npc_flags & UNIT_NPC_FLAG_VENDOR_MASK)
                 && !ai.action_recently_tried(BotAI::ActionKind::SellTrash, low, now_ms))
             {
-                emit.vendor_sell_trash(u.guid);
+                emit.vendor_sell_trash(u.guid);   // junk AND craft surplus — sell_trash decides what moves
                 ai.note_action_retry(BotAI::ActionKind::SellTrash, low, now_ms);
             }
             if (in_reach && (u.npc_flags & UNIT_NPC_FLAG_REPAIR) && s.lowest_equipped_durability_pct() < 100 && s.gold() > 0
