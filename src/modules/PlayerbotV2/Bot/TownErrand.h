@@ -93,6 +93,7 @@ struct Dest
     float         x = 0.f, y = 0.f, z = 0.f;
     float         weight = 0.f;   // how much this place draws a bot right now (BaseWeight, raised by a need)
     std::uint32_t focus_type = 0; // craft kinds only: the station's SpellFocusObject id, to match recipes against
+    float         orientation = -1.f; // NPC kinds: the spawn's facing — the customer side for StandPoint (-1 = none)
 };
 
 // How much each kind of place draws a resident. The bank and the auction house are where a city's crowd is; a bot's own trainer and
@@ -172,11 +173,15 @@ inline int Pick(std::vector<Dest> const& dests, float bx, float by, float max_ya
 
 // Where a bot stands at a place: on the side it comes from, at `ring` yards, turned by its slot so the bots at one place stand side by
 // side instead of on one point. `slot` 0.. (the order the place was claimed in).
-inline void StandPoint(float px, float py, float bx, float by, float ring, std::uint32_t slot, float& sx, float& sy)
+// The point on the place's ring a bot stands at. `face` is the direction the place faces its customers
+// (an NPC's spawn orientation — a banker faces the queue, an auctioneer the hall); -100 or less = none, and
+// the near side to the walking bot is used (right for a round prop: mailbox, anvil, gate).
+inline void StandPoint(float px, float py, float bx, float by, float ring, std::uint32_t slot, float& sx, float& sy,
+                       float face = -100.0f)
 {
     float const dx = bx - px, dy = by - py, len = std::hypot(dx, dy);
-    float base = len > 0.5f ? std::atan2(dy, dx) : 0.0f;
-    // 0, +0.55, -0.55, +1.1, -1.1 ... radians: a fan on the near side
+    float base = face > -50.0f ? face : (len > 0.5f ? std::atan2(dy, dx) : 0.0f);
+    // 0, +0.55, -0.55, +1.1, -1.1 ... radians: a fan on the facing side
     float const step = float((slot + 1u) / 2u) * 0.55f;
     base += (slot % 2u) ? step : -step;
     sx = px + std::cos(base) * ring;

@@ -47,6 +47,9 @@ struct TownNpc
     // and mailboxes leave both 0.
     uint32 focus_type   = 0;
     uint8  focus_kind   = 0;
+    // The way the spawn faces (creature spawns only, -1 = none): its customer side — a banker faces the queue,
+    // an auctioneer the hall. Stand points fan out on that side, never behind the counter.
+    float  orientation  = -1.f;
 
     bool usable_by(bool alliance) const { return alliance ? alliance_ok : horde_ok; }
 };

@@ -99,6 +99,7 @@ void TownNpcIndex::Initialize()
         n.z             = data.spawnPoint.GetPositionZ();
         n.npc_flags     = flags;
         n.trainer_class = uint8(tmpl->trainer_class);
+        n.orientation   = data.spawnPoint.GetOrientation();
         n.alliance_ok   = ft && !Hostile(ft, alliance);
         n.horde_ok      = ft && !Hostile(ft, horde);
         if (!n.alliance_ok && !n.horde_ok)

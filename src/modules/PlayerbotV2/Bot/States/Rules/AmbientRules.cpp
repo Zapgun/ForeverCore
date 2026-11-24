@@ -926,9 +926,10 @@ bool InnRestFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, 
         InnLog(s, "inn is full, goes on errands", bx, by);
         return false;
     }
-    // Stand a few yards from the innkeeper, on the side the bot comes from, each bot in its own slot of a fan so they stand side by side.
+    // Stand a few yards from the innkeeper on its customer side (the spawn's facing — the innkeeper looks at the
+    // room, never into the counter or a wall), each bot in its own slot of a fan so they stand side by side.
     float tx, ty;
-    TE::StandPoint(inn->x, inn->y, bx, by, kInnStandYards + float(slot / 5u) * 1.5f, slot, tx, ty);
+    TE::StandPoint(inn->x, inn->y, bx, by, kInnStandYards + float(slot / 5u) * 1.5f, slot, tx, ty, inn->orientation);
     // The stand point is a straight line from the innkeeper and can sit behind a wall; the inn is the goal, so a bot that is within a
     // few yards of the innkeeper, or that cannot get closer than a room's width, rests where it is.
     float const to_inn = std::hypot(bx - inn->x, by - inn->y);
@@ -1064,7 +1065,7 @@ static void TownDests(BotSnapshotView const& s, float bx, float by, float bz, st
         else if ((f & UNIT_NPC_FLAG_TRAINER) && n.trainer_class != 0 && n.trainer_class == s.cls()) k = TE::Kind::Trainer;
         else if (f & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR)) { k = TE::Kind::Vendor; if (need_vendor) boost = 5.0f; }
         if (k == TE::Kind::None) return;
-        out.push_back({ k, n.spawn_id, n.entry, n.x, n.y, n.z, TE::BaseWeight(k) * boost });
+        out.push_back({ k, n.spawn_id, n.entry, n.x, n.y, n.z, TE::BaseWeight(k) * boost, 0u, n.orientation });
     });
     ::Playerbot::V2::Travel::TownNpcIndex::Instance().ForEachMailboxNear(s.map_id(), bx, by, c.radius, [&](::Playerbot::V2::Travel::TownNpc const& n)
     {
@@ -1133,7 +1134,7 @@ static bool TakeErrand(BotSnapshotView const& s, TE::State& st, TE::Dest const& 
     if      (d.kind == TE::Kind::Mailbox) ring = 2.5f;
     else if (d.kind == TE::Kind::Exit)    ring = 3.0f + float(slot % 6u) * 1.5f;
     else if (TE::IsCraftKind(d.kind))     ring = 2.8f + float(slot % 3u) * 0.7f;   // right at the anvil: two smiths share the fire
-    TE::StandPoint(d.x, d.y, bx, by, ring, slot, st.tx, st.ty);
+    TE::StandPoint(d.x, d.y, bx, by, ring, slot, st.tx, st.ty, d.orientation);
     st.tz = d.z;
     st.phase = 1;
     st.phase_start_ms = now_ms;
