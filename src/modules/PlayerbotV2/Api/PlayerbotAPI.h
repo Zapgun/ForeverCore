@@ -690,6 +690,10 @@ public:
     // raw byte mirrors UnitStandStateType. ServerRefused mid-cast since
     // sitting cancels the cast; otherwise idempotent.
     Result set_stand_state(uint8 state);
+    // Draw or stow the visible weapons (SheathState: 0=UNARMED, 1=MELEE,
+    // 2=RANGED). The station show draws the tool; combat paths manage it themselves.
+    Result set_sheath(uint8 sheath, int8_t hold = -1);
+    Result play_sound(uint32 sound_kit);
 
     // Inventory
     // `target` may be a unit or one of the bot's own items (a poison or

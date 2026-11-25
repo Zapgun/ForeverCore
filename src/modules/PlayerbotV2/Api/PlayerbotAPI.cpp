@@ -4266,7 +4266,9 @@ Result API::stop_attack(bool clear_ghost_combat)
     // Attack off ends Auto Shot as well (a player's attack toggle does); left running it keeps the hunter in the aim pose with no target.
     if (p_->GetClass() == CLASS_HUNTER)
         p_->InterruptSpell(CURRENT_AUTOREPEAT_SPELL, false);
-    if (!p_->IsInCombat())
+    // A station show's sheath hold keeps the tool out — an OOC stop_attack is no
+    // reason to stow it mid-visit (the hold itself drops the moment combat starts).
+    if (!p_->IsInCombat() && !p_->BotSheathHold())
         p_->SetSheath(SHEATH_STATE_UNARMED);
     // Mirror a real client deselecting on disengage Ã¢Â€Â” keeps the published
     // UNIT_FIELD_TARGET truthful for other players' target-of-target frames.
@@ -6089,6 +6091,27 @@ Result API::set_stand_state(uint8 state)
     // surprise cast-cancel; cast then sit if that's what's wanted.
     if (p_->IsNonMeleeSpellCast(false, true, true)) return Result::ServerRefused;
     p_->SetStandState(static_cast<UnitStandStateType>(state));
+    return Result::Ok;
+}
+
+Result API::set_sheath(uint8 sheath, int8_t hold)
+{
+    if (!p_) return Result::Other;
+    SheathState const state = sheath > SHEATH_STATE_RANGED ? SHEATH_STATE_UNARMED : static_cast<SheathState>(sheath);
+    p_->SetSheath(state);
+    // Drawn bots get auto-resheathed after 3 idle seconds (Player::Update) — a show
+    // drawing weapons on purpose holds that off until it's resheathed or fights.
+    // hold < 0 keeps that default; a passing call (skill-up cast) draws without it
+    // so the resheath timer cleans the pose up itself when the casts stop.
+    p_->SetBotSheathHold(hold < 0 ? state != SHEATH_STATE_UNARMED : hold != 0);
+    TC_LOG_INFO("playerbot.v2", "[sheath] {} -> state={} now={}", p_->GetName(), uint32(sheath), uint32(p_->GetSheath()));
+    return Result::Ok;
+}
+
+Result API::play_sound(uint32 sound_kit)
+{
+    if (!p_ || !sound_kit) return Result::Other;
+    p_->PlayDistanceSound(sound_kit);
     return Result::Ok;
 }
 

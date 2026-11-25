@@ -1091,24 +1091,34 @@ static void TownDests(BotSnapshotView const& s, float bx, float by, float bz, st
     }
 }
 
+static uint32 StationToolEntry(TE::Kind kind, BotSnapshotView const& s);   // defined below with the recipe table
+
 static void EndErrand(BotSnapshotView const& s, BotIntentEmitter& emit, TE::State& st, bool done)
 {
     if (st.work_emote)
         emit.perform_emote(EMOTE_STATE_NONE);   // a looped work emote stops when the bot moves off
-    if (st.tool_bag != 0xFF)
+    if (st.tool_in_hand)
+    {
         // The swap back: the displaced weapon sits in the tool's bag slot. An empty slot means the
-        // mainhand was empty when the tool went in — nothing to restore, and the emit would just
-        // return InvalidTarget (the tool stays; the next equip pass sorts it).
+        // mainhand was empty when the tool went in — nothing to restore. The slot holding the tool
+        // itself means a gear rule already put the weapon back on — leave it alone.
         for (auto const& it : s.raw().inventory.bag_items)
-            if (it.bag == st.tool_bag && it.slot == st.tool_slot)
+            if (it.bag == st.tool_bag && it.slot == st.tool_slot && it.entry != StationToolEntry(st.kind, s))
             {
                 emit.equip_item(st.tool_bag, st.tool_slot, EQUIPMENT_SLOT_MAINHAND);
                 break;
             }
+        emit.set_sheath(SHEATH_STATE_UNARMED);   // the show drew the weapons; hands away again at idle
+    }
     if (st.place) TE::Spots::Get().Release(st.place, s.bot_id());
     if (st.key) st.recent.add(st.key);
     if (done) ++st.errands;
+    bool const had_show = st.work_emote;
     st.Clear();
+    // A visit that ran the work show ends on a beat — the smith wipes his hands before
+    // he walks. Without it the next pick's move_to lands the same tick the emote drops
+    // and the client slides him out of a mid-swing pose.
+    if (had_show) st.pause_until_ms = s.published_at_ms() + 1500u;
 }
 
 // A bot placed in the town by the spawner (TownPct) is in its profession mode for 45-90 minutes and lives there. Any other bot in a
@@ -1134,6 +1144,7 @@ static bool TakeErrand(BotSnapshotView const& s, TE::State& st, TE::Dest const& 
     if (!TE::Spots::Get().Claim(place, s.bot_id(), now_ms, kSpotHoldMs, PlaceCap(d.kind), &slot))
         return false;
     st.Clear();
+    if (d.kind == TE::Kind::Vendor) st.want_vendor = false;   // the sell the last visit couldn't do
     st.kind = d.kind; st.key = d.key; st.place = place; st.entry = d.entry; st.slot = slot;
     st.focus_type = d.focus_type;
     st.leaving = leaving;
@@ -1166,6 +1177,11 @@ static bool PickErrand(BotSnapshotView const& s, BotAI& ai, TE::State& st, uint3
         && std::any_of(dests.begin(), dests.end(), [](TE::Dest const& d) { return d.kind == TE::Kind::Exit; });
     if (leaving)
         std::erase_if(dests, [](TE::Dest const& d) { return d.kind != TE::Kind::Exit; });
+    // A kit visit that couldn't start for full bags sent the bot to sell first: the next
+    // errand is a vendor when one's in reach (cleared when the vendor errand is taken).
+    if (!leaving && st.want_vendor
+        && std::any_of(dests.begin(), dests.end(), [](TE::Dest const& d) { return d.kind == TE::Kind::Vendor; }))
+        std::erase_if(dests, [](TE::Dest const& d) { return d.kind != TE::Kind::Vendor; });
     if (dests.empty()) return false;
     uint64 const bot = s.bot_id();
     uint32 const map = s.map_id();
@@ -1227,7 +1243,23 @@ static bool FocusInReach(BotSnapshotView const& s, uint32 focus_type)
 // anywhere — still gives skill (orange over yellow over green), not on cooldown. Reagents are NOT part of the pick — the caller stocks the bags for the
 // chosen recipe (a worker's kit is conjured once per visit), so a recipe it knows always leads to a real cast.
 // 0 = no usable recipe at all — the station show then falls back to the work emote.
-static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type)
+// The station's own trade only: a smith at the anvil casts smithing, never the leatherworking she
+// also knows — the recipe needing no focus at all is not a license to work a foreign craft on this
+// fixture (a leatherwork anim at the anvil while the smithing kit clangs was the tell). Same
+// station -> skill mapping as CraftKindMatch.
+static bool StationSkillMatch(TE::Kind k, uint32 skill_line)
+{
+    switch (k)
+    {
+        case TE::Kind::Forge:    return skill_line == 164 || skill_line == 202 || skill_line == 186;
+        case TE::Kind::Cookfire: return skill_line == 185;
+        case TE::Kind::Loom:
+        case TE::Kind::Moonwell: return skill_line == 197;
+        default:                 return false;
+    }
+}
+
+static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type, TE::Kind kind)
 {
     if (!FocusInReach(s, focus_type))
         return 0;
@@ -1238,6 +1270,7 @@ static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type)
     {
         RecipeMeta const* meta = FindRecipeMeta(spell_id);
         if (!meta || s.is_skill_capped(meta->skill_line_id)) continue;
+        if (!StationSkillMatch(kind, meta->skill_line_id)) continue;
         SpellInfo const* si = sSpellMgr->GetSpellInfo(spell_id, DIFFICULTY_NONE);
         if (!si) continue;
         // The station's own focus — or none: vanilla recipes that need no station (the bolts,
@@ -1290,26 +1323,69 @@ static uint32 StationRecipeEntry(TE::Kind kind, BotSnapshotView const& s)
     }
 }
 
-static void EquipStationTool(BotSnapshotView const& s, BotIntentEmitter& emit, TE::State& st)
+enum class KitResult { Working, Ready, Abort };
+
+// The kit of the trade: the station's tool in the hand. The emit can't report an outcome — a refused
+// give or swap is invisible to the bot thread — so the bags are the truth: an item that left the bags
+// went into the hand (an equipment slot is not a bag), which is what confirms the swap, and an item
+// still in the bags means the last emit didn't land and goes out again. Full bags make the give
+// impossible outright: the worker goes to sell first (want_vendor steers the next errand to a vendor).
+static KitResult StationKit(BotSnapshotView const& s, BotIntentEmitter& emit, TE::State& st)
 {
-    if (st.tool_bag != 0xFF) return;   // already in hand
     uint32 const tool_entry = StationToolEntry(st.kind, s);
-    if (!tool_entry) return;
+    if (!tool_entry || st.tool_in_hand) return KitResult::Ready;
+    // Already in the hand — left on from an earlier visit's empty-mainhand end. Counts as a
+    // confirmed kit; without this the bags scan finds nothing and conjures a second tool.
+    if (s.raw().inventory.equipped.size() > EQUIPMENT_SLOT_MAINHAND &&
+        s.raw().inventory.equipped[EQUIPMENT_SLOT_MAINHAND].entry == tool_entry)
+    {
+        st.tool_in_hand = true;
+        emit.set_sheath(SHEATH_STATE_MELEE);
+        emit.emote_text("hefts their hammer.");   // debug anchor: the kit confirmed — the hand should show the tool now
+        return KitResult::Ready;
+    }
     for (auto const& it : s.raw().inventory.bag_items)
         if (it.entry == tool_entry)
         {
+            // A swap is already in flight: only the tracked item counts — a second same-entry
+            // tool in the bags (or the swap-back's spare) must not keep re-triggering swaps.
+            if (st.tool_guid != 0)
+            {
+                if (it.guid.GetCounter() == st.tool_guid)
+                {
+                    if (emit.equip_item(it.bag, it.slot, EQUIPMENT_SLOT_MAINHAND))
+                    {
+                        st.tool_bag = it.bag;
+                        st.tool_slot = it.slot;
+                    }
+                    return KitResult::Working;
+                }
+                continue;   // not our tool — keep looking
+            }
             if (emit.equip_item(it.bag, it.slot, EQUIPMENT_SLOT_MAINHAND))
             {
                 st.tool_bag = it.bag;
                 st.tool_slot = it.slot;
+                st.tool_guid = it.guid.GetCounter();
             }
-            return;
+            return KitResult::Working;
         }
-    if (!st.tool_given && emit.give_item(tool_entry))
+    if (st.tool_bag != 0xFF)   // a swap went out and the tool left the bags: it's the hand now
     {
-        st.tool_given = true;
-        TC_LOG_INFO("playerbot.v2", "[town] {} has no tool: item {} given for the {}", s.name(), tool_entry, TE::KindName(st.kind));
+        st.tool_in_hand = true;
+        emit.set_sheath(SHEATH_STATE_MELEE);   // hands stay sheathed at idle: draw the tool or the show looks empty-handed
+        emit.emote_text("hefts their hammer.");   // debug anchor: the kit confirmed — the hand should show the tool now
+        return KitResult::Ready;
     }
+    if (s.bag_free_slots() < 2u)
+    {
+        // Nowhere for the kit to land — a worker with full bags sells before he stocks up.
+        st.want_vendor = true;
+        return KitResult::Abort;
+    }
+    if (emit.give_item(tool_entry))
+        TC_LOG_INFO("playerbot.v2", "[town] {} has no tool: item {} given for the {}", s.name(), tool_entry, TE::KindName(st.kind));
+    return KitResult::Working;
 }
 
 // A bot at a craft station "uses" it every 8-15 s of the linger: cast a known recipe that needs this focus when
@@ -1317,12 +1393,49 @@ static void EquipStationTool(BotSnapshotView const& s, BotIntentEmitter& emit, T
 // the looped work emote for the station.
 static void CraftUse(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& emit, TE::State& st, uint32 now_ms)
 {
+    // The kit comes first, on a quicker cadence than the use-beat: a give or swap the
+    // server refuses leaves no trace the bot thread can see, so each check retries the
+    // step that's still short. A few failures and the visit ends — a worker who can't
+    // get set up walks off; miming the station with empty hands was the tell.
+    if (!st.kit_ready)
+    {
+        if (now_ms < st.next_kit_ms) return;
+        st.next_kit_ms = now_ms + 2000u;
+        KitResult const kit = StationKit(s, emit, st);
+        TC_LOG_INFO("playerbot.v2", "[town-kit] {} attempt={} result={} kind={} guid={}", s.name(),
+            uint32(st.kit_attempts), kit == KitResult::Ready ? "ready" : kit == KitResult::Abort ? "abort" : "working",
+            TE::KindName(st.kind), st.tool_guid);
+        if (kit == KitResult::Ready)
+            st.kit_ready = true;
+        else if (kit == KitResult::Abort || ++st.kit_attempts >= 6u)
+        {
+            EndErrand(s, emit, st, false);
+            return;
+        }
+        else
+            return;   // the kit's still coming together — the work show waits for it
+    }
+    // The tool displaces the weapon for the whole visit: keep the upgrade rule off the mainhand
+    // the way the skillup path does — a staff swapped back in mid-hammer was the tell.
+    if (st.tool_guid != 0 || st.tool_in_hand)
+        ai.station_prop_extend(now_ms);
+    // The work sound while the emote loops: the kit is a one-shot, so re-push it on the animation's
+    // strike period (conf-tuned: the clang should land on the visible hit, a fixed period, no jitter).
+    if (st.work_emote && now_ms >= st.next_sound_ms)
+    {
+        static int32 const beat_ms = sConfigMgr->GetIntDefault("Playerbot.World.Town.CraftSoundBeatMs", 1000, true);
+        st.next_sound_ms = now_ms + uint32(beat_ms > 200 ? beat_ms : 200);
+        if (uint32 const kit = TE::SoundKitFor(TE::Cfg(), st.kind))
+            emit.emit(PlaySoundIntent{ kit });
+    }
     if (now_ms < st.next_use_ms) return;
-    if (st.tool_bag == 0xFF)
-        EquipStationTool(s, emit, st);   // still empty-handed: the conjured tool may have just landed
     st.next_use_ms = now_ms + 8000u + uint32(ai.rng().int_range(0, 70)) * 100u;
+    // The work sound: the real cast carries whatever audio its visual kit owns, but the emote beats are
+    // silent — push the station's own tradeskill kit (anvil clang, pot, loom) to earshot once a beat.
+    if (uint32 const kit = TE::SoundKitFor(TE::Cfg(), st.kind))
+        emit.emit(PlaySoundIntent{ kit });
     if (TE::Cfg().craft_cast)
-        if (uint32 const spell = PickCraftSpell(s, st.focus_type))
+        if (uint32 const spell = PickCraftSpell(s, st.focus_type, st.kind))
         {
             if (s.has_reagents(spell))
             {
@@ -1459,7 +1572,7 @@ static void ArriveErrand(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& 
         }
         if (!station.IsEmpty())
             emit.face_target(station);
-        EquipStationTool(s, emit, st);
+        st.next_kit_ms = now_ms;   // the kit run starts on the first linger tick: give -> swap -> confirm
         st.next_use_ms = now_ms + 2000u + uint32(ai.rng().int_range(0, 20)) * 100u;
     }
     else if (st.entry)
@@ -1493,6 +1606,9 @@ bool TownErrandFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const
     // An errand left long ago (a fight, a quest, a show took over) is not resumed: the next place is chosen from here.
     if (st.phase != 0 && now_ms - st.phase_start_ms > kErrandStaleMs)
         EndErrand(s, emit, st, false);
+
+    // Settle beat: a show that just ended stands a moment before the next errand starts.
+    if (int32(st.pause_until_ms - now_ms) > 0) return true;
 
     if (st.phase == 2)
     {

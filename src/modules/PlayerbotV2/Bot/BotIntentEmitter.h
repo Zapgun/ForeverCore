@@ -158,6 +158,7 @@ public:
     bool dismiss_pet() { return emit(DismissPetIntent{}); }
     bool sit()  { return emit(SetStandStateIntent{1}); }
     bool stand(){ return emit(SetStandStateIntent{0}); }
+    bool set_sheath(uint8 sheath, int8_t hold = -1) { return emit(SetSheathIntent{sheath, hold}); }
     // clear_generators=true tears down stale MotionMaster generators (not just
     // the active spline) — see StopMovementIntent. Use it when a movement
     // target may have outlived its validity (e.g. on a cross-map teleport).

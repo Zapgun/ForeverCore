@@ -30,6 +30,10 @@ struct Config
     std::uint32_t fixture_loom = 0;
     std::uint32_t fixture_moonwell = 0;
     bool          craft_cast = true;       // CraftCast: really craft a known recipe at a station (0 = work-emote show only)
+    std::uint32_t craft_sound_forge = 4614;    // CraftSound.*: the sound kit pushed to earshot each work
+    std::uint32_t craft_sound_cookfire = 7035; // beat (the real Tradeskills kits; 0 = silent like vanilla
+    std::uint32_t craft_sound_loom = 6425;     // emote work). 1166 smelt is under Forge; enchanting has
+    std::uint32_t craft_sound_moonwell = 0;    // no dedicated kit.
     std::uint32_t spot_cap = 5;            // SpotCap: bots at one place (a bank, an auction house, a trainer) at once
     std::uint32_t inn_cap = 4;             // InnCap: bots resting at one inn at once
     std::uint32_t mailbox_cap = 2;         // MailboxCap: bots at one mailbox at once
@@ -71,6 +75,19 @@ inline std::uint32_t FixtureTarget(Config const& c, Kind k)
     }
 }
 
+// The SoundKit pushed to earshot on each work beat at a place of a kind (0 = silent).
+inline std::uint32_t SoundKitFor(Config const& c, Kind k)
+{
+    switch (k)
+    {
+        case Kind::Forge:    return c.craft_sound_forge;
+        case Kind::Cookfire: return c.craft_sound_cookfire;
+        case Kind::Loom:     return c.craft_sound_loom;
+        case Kind::Moonwell: return c.craft_sound_moonwell;
+        default:             return 0;
+    }
+}
+
 inline Config const& Cfg()
 {
     static Config const c = []
@@ -97,6 +114,10 @@ inline Config const& Cfg()
         k.fixture_loom      = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.Fixture.Loom", 0, true), 0, 50));
         k.fixture_moonwell  = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.Fixture.Moonwell", 0, true), 0, 50));
         k.craft_cast        = sConfigMgr->GetBoolDefault("Playerbot.World.Town.CraftCast", true, true);
+        k.craft_sound_forge    = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.CraftSound.Forge", 4614, true), 0, 100000));
+        k.craft_sound_cookfire = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.CraftSound.Cookfire", 7035, true), 0, 100000));
+        k.craft_sound_loom     = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.CraftSound.Loom", 6425, true), 0, 100000));
+        k.craft_sound_moonwell = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.CraftSound.Moonwell", 0, true), 0, 100000));
         k.spot_cap          = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.SpotCap", 5, true), 1, 100));
         k.inn_cap           = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.InnCap", 4, true), 0, 100));
         k.mailbox_cap       = std::uint32_t(std::clamp<int>(sConfigMgr->GetIntDefault("Playerbot.World.Town.MailboxCap", 2, true), 0, 100));

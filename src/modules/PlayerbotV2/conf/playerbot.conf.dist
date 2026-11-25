@@ -391,6 +391,15 @@ Playerbot.World.Town.LingerCraftMaxSec = 90
 # 1 = a bot at a craft station really casts a recipe it knows that needs that station (and the reagents for);
 # 0 = show only: it plays a looped work emote instead.
 Playerbot.World.Town.CraftCast = 1
+#   Sound kits pushed to nearby players on each station-work beat — the real Tradeskills kits (emote
+#   beats carry no audio on their own). Per station kind; 0 = silent like vanilla emote work.
+Playerbot.World.Town.CraftSound.Forge    = 4614
+Playerbot.World.Town.CraftSound.Cookfire = 7035
+Playerbot.World.Town.CraftSound.Loom     = 6425
+Playerbot.World.Town.CraftSound.Moonwell = 0
+#   The kits are one-shots: re-push period while the work emote loops, tuned so the clang lands
+#   on the hammer-strike frame. A fixed period, no jitter — lengthen it if the strike drifts.
+Playerbot.World.Town.CraftSoundBeatMs    = 1000
 # Fixture places: the bots a living city never leaves empty. While a kind's places hold fewer than its target,
 # the next errand of a resident is drawn there before the usual weighted pick (bots on their way already count,
 # and SpotCap still applies, so the fill cannot over-shoot and the crowd keeps rotating). 0 = no fixture for the kind.

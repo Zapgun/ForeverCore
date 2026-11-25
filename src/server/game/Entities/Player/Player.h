@@ -1350,6 +1350,10 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         // See WorldObject::ModSpellCastTime and Spell::TriggerGlobalCooldown.
         float GetBotCastSpeedMod() const { return _botCastSpeedMod.load(std::memory_order_relaxed); }
         void SetBotCastSpeedMod(float mod) { _botCastSpeedMod.store(mod, std::memory_order_relaxed); }
+        // PlayerbotV2 ambient show: keep drawn weapons out past the 3s idle resheath
+        // (the smith's hammer at the forge). Set by API::set_sheath; combat clears it.
+        bool BotSheathHold() const { return m_botSheathHold; }
+        void SetBotSheathHold(bool hold) { m_botSheathHold = hold; }
 
         // Played Time Stuff
         time_t m_logintime;
@@ -3491,6 +3495,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         // Temporary removed pet cache
         uint32 m_temporaryUnsummonedPetNumber;
         uint32 m_botSheathIdleMs = 0;                       // bot only: ms with weapons drawn and no fight
+        bool   m_botSheathHold = false;                     // bot only: a show wants the weapons out (station tool); cleared by combat or an UNARMED set_sheath
         uint32 m_petResummonDelay;                          // ms until the pet remembered at login is summoned (0 = none pending)
         Optional<ReactStates> m_temporaryPetReactState;
         uint32 m_oldpetspell;

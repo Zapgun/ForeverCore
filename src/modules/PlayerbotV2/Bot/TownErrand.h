@@ -302,15 +302,23 @@ struct State
     std::uint32_t focus_type = 0;                 // craft kinds: the station's SpellFocusObject id, for matching recipes
     std::uint32_t next_use_ms = 0;                // the next "use the place" beat (craft cast, work emote, mid-linger fidget)
     bool          work_emote = false;             // a looped work emote is up: clear it when the errand ends
+    std::uint32_t next_sound_ms = 0;              // next one-shot sound push while the work emote loops
     std::uint8_t  tool_bag = 0xFF;                // the bag slot the profession tool came out of for the station show
     std::uint8_t  tool_slot = 0xFF;               // (the swap put the weapon there: equipping it back restores the kit)
-    bool          tool_given = false;             // the missing tool was conjured into the bags once this errand
+    std::uint64_t tool_guid = 0;                  // the swap's item (raw guid) — two same-entry tools (one equipped, one bagged) ping-pong forever on entry matching alone
+    bool          kit_ready = false;              // the kit is confirmed: the tool's in hand, or the station needs none
+    bool          tool_in_hand = false;           // the swap landed — the tool was seen leaving the bags, not just pushed
+    std::uint8_t  kit_attempts = 0;               // failed acquisition checks — a few and the visit is abandoned
+    std::uint32_t next_kit_ms = 0;                // the next kit check (a quicker cadence than the use-beat)
     bool          stock_given = false;            // reagents for the recipe were conjured once this errand
     bool          recipe_given = false;           // the station's starter recipe was taught once this errand (pre-pipeline bots)
+    bool          want_vendor = false;            // a kit visit that couldn't start (full bags) steers the next errand to a vendor
+    std::uint32_t pause_until_ms = 0;             // settle beat set by EndErrand after Clear: stand a moment before the next pick walks off (no mid-swing slide)
     Recent        recent;
 
+    // want_vendor outlives the errand that set it — it's the reason for the next one.
     void Clear() { kind = Kind::None; key = 0; place = 0; entry = 0; phase = 0; near_player_ms = 0; issued = false; leaving = false; prog_ms = 0;
-                   focus_type = 0; next_use_ms = 0; work_emote = false; tool_bag = tool_slot = 0xFF; tool_given = false; stock_given = false; recipe_given = false; }
+                   focus_type = 0; next_use_ms = 0; work_emote = false; next_sound_ms = 0; tool_bag = tool_slot = 0xFF; tool_guid = 0; kit_ready = false; tool_in_hand = false; kit_attempts = 0; next_kit_ms = 0; stock_given = false; recipe_given = false; pause_until_ms = 0; }
 };
 
 // Has the walking bot stopped getting closer? It counts as progress to move `yards` in `window_ms`.

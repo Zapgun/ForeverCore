@@ -320,6 +320,8 @@ struct IntentVisitor
     Result operator()(PetCastSpellIntent const& i)     { return api.pet_cast(i.spell_id, i.target); }
     Result operator()(DismissPetIntent const&)         { return api.dismiss_pet(); }
     Result operator()(SetStandStateIntent const& i)    { return api.set_stand_state(i.stand_state); }
+    Result operator()(SetSheathIntent const& i)        { return api.set_sheath(i.sheath, i.hold); }
+    Result operator()(PlaySoundIntent const& i)          { return api.play_sound(i.sound_kit); }
     // SayChat/YellChat/EmoteChat/GuildChat/RaidChat/OfficerChat/RaidWarning/
     // Whisper/PartyChat are bundled into `ChatIntent`. See operator()(ChatIntent).
     Result operator()(UnstuckIntent const& i)          { return api.unstuck(i.distance); }

@@ -79,6 +79,12 @@ public:
     char const* last_rule_fired() const { return last_rule_fired_; }
     void        set_last_rule_fired(char const* name);
 
+    // Skill-up station prop: a craft_skillup cast at a focus puts the trade tool in the hand and
+    // keeps the upgrade rule off the mainhand while the cast run is live. Timestamped — a run that
+    // just stops (moves off, quest, fight) expires on its own, no cleanup emit needed.
+    bool station_prop_out(uint32 now_ms) const { return int32(station_prop_until_ms_ - now_ms) > 0; }
+    void station_prop_extend(uint32 now_ms, uint32 span_ms = 12000) { station_prop_until_ms_ = now_ms + span_ms; }
+
     // BG outcome dedup — the post-match leave rule fires multiple times
     // (bg_status=4 persists ~2min until TC kicks); we only want to record
     // the win/loss tally ONCE per match. Keyed by the snapshot published_at
@@ -3467,6 +3473,7 @@ private:
     // Bumped by every set_last_rule_fired(): lets a tick tell "a rule fired
     // this tick" from a last_rule_fired_ left over from an earlier tick.
     uint32         rule_fire_seq_ = 0;
+    uint32         station_prop_until_ms_ = 0;
 public:
     uint32         rule_fire_seq() const { return rule_fire_seq_; }
     // [attack_rule]: the target of an [attack_start] line logged during this tick's dispatch, and the rule count then. The line names

@@ -123,6 +123,19 @@ static bool RecipeFocusNear(BotSnapshotView const& s, uint32 spell_id)
     return false;
 }
 
+// The trade tool a station recipe is cast with, by skill line — the same prop the
+// town-errand show puts in the hand. Zero means the skill has no hand tool.
+static uint32 SkillupToolEntry(uint16 skill_line_id)
+{
+    switch (skill_line_id)
+    {
+        case 164: return 5956;   // Blacksmith Hammer
+        case 202: return 6219;   // Arclight Spanner
+        case 186: return 2901;   // Mining Pick (smelting)
+        default:  return 0;
+    }
+}
+
 // The mana wait before a pull. A party with a player in it has none (playtest 2026-10-15: the player watches the mana); a raid keeps it,
 // and so does a group of bots alone, where nobody else would hold the pull for the healer's drink (deadmines_full n57: the priest
 // went into every fight at 1-5 % mana). With the tank leading the dungeon ("lead on") the tank holds it, the player's own mana too:
@@ -845,6 +858,17 @@ bool MaintainAutoEquipUpgrades(BotSnapshotView const& s, BotAI& ai,
         // Defense-in-depth: builder clamps equip_slot to <19, but indexing
         // equipped[19+] is UB (bag slots are 30-33) — never walk past it.
         if (dst >= raw.inventory.equipped.size()) continue;
+        // A station errand's tool show owns the main hand for the visit — the smith's
+        // hammer is the prop. Don't undo the swap mid-show; EndErrand restores the kit.
+        // Bound it by linger_until: a bot carried off mid-show (party invite, combat)
+        // keeps the latched flag with no errand running — the expiry lifts the gate and
+        // this very rule puts the real weapon back on, hammer to the bags.
+        auto const& te = ai.town_errand();
+        // tool_guid != 0 covers acquisition too: a kit swap in flight would otherwise get
+        // ping-ponged back out by this very rule before the confirm ever sees the hand.
+        if (dst == EQUIPMENT_SLOT_MAINHAND &&
+            (((te.tool_in_hand || te.tool_guid != 0) && int32_t(te.linger_until_ms - s.published_at_ms()) > 0) ||
+             ai.station_prop_out(s.published_at_ms()))) continue;
         if (it.item_level == 0)    continue;
         if (it.quality == 0)       continue;
         // Per-entry retry throttle (shared with idle:equip_upgrade). When the
@@ -21603,6 +21627,30 @@ bool AutoactDispatch(BotSnapshotView const& s, BotAI& ai,
             }
             if (best_spell != 0)
             {
+                // The station prop: a recipe that needs a focus is cast at the station with the
+                // trade's tool in the hand — same look as the town-errand smith. The swap puts
+                // the real weapon in the tool's bag slot; the upgrade rule leaves the hand alone
+                // while the cast run is live (station_prop_out), then restores the weapon after.
+                // The draw is hold-free: the 3 s idle resheath cleans the pose up itself when the
+                // casts stop, so nothing here can wedge the sheath or the swap suppression.
+                if (SpellInfo const* fsi = sSpellMgr->GetSpellInfo(best_spell, DIFFICULTY_NONE);
+                    fsi && fsi->RequiresSpellFocus)
+                {
+                    RecipeMeta const* fm = FindRecipeMeta(best_spell);
+                    uint32 const tool = fm ? SkillupToolEntry(fm->skill_line_id) : 0;
+                    if (tool)
+                    {
+                        bool have = s.raw().inventory.equipped.size() > EQUIPMENT_SLOT_MAINHAND &&
+                                    s.raw().inventory.equipped[EQUIPMENT_SLOT_MAINHAND].entry == tool;
+                        if (!have)
+                            for (auto const& it : s.raw().inventory.bag_items)
+                                if (it.entry == tool) { have = emit.equip_item(it.bag, it.slot, EQUIPMENT_SLOT_MAINHAND); break; }
+                        if (!have && s.bag_free_slots() >= 1)
+                            emit.give_item(tool);
+                        emit.set_sheath(SHEATH_STATE_MELEE, 0);
+                        ai.station_prop_extend(s.published_at_ms());
+                    }
+                }
                 emit.cast(best_spell);
                 ai.set_last_rule_fired("idle:craft_skillup");
                 return true;
@@ -22336,6 +22384,10 @@ void DispatchIdle(BotAI& ai,
             auto& te = ai.town_errand();
             if (te.place) ::Playerbot::V2::TownErrand::Spots::Get().Release(te.place, s.guid().GetCounter());
             if (te.key) te.recent.add(te.key);
+            // EndErrand doesn't run on this abort: put away a drawn tool and clear a
+            // looping work emote or the dropped show follows the bot around town.
+            if (te.work_emote) emit.perform_emote(EMOTE_STATE_NONE);
+            if (te.tool_in_hand) emit.set_sheath(SHEATH_STATE_UNARMED);
             te.Clear();
             ::Playerbot::V2::TownLife::Counters().idle_town.fetch_add(1, std::memory_order_relaxed);
             TC_LOG_INFO("playerbot.v2", "[idle] bot={} lvl={} map={} zone={} stationary {}s last_rule={} strikes={} -> new errand",
