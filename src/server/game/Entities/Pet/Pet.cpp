@@ -181,7 +181,6 @@ public:
         SPELLS,
         COOLDOWNS,
         CHARGES,
-        DEBUG_SLEEP,
 
         MAX
     };
@@ -216,13 +215,6 @@ public:
         stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_PET_SPELL_CHARGES);
         stmt->setUInt32(0, petNumber);
         SetPreparedQuery(CHARGES, stmt);
-
-        // Debug-only artificial delay (Classic.PetGearScaling.DebugLoadDelayMs): the sleep executes on
-        // the character DB worker ahead of delivering the results, stretching the window where the pet
-        // exists but its load has not completed. That makes load-cancel races reproducible on demand.
-        stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_PET_LOAD_DEBUG_SLEEP);
-        stmt->setFloat(0, sConfigMgr->GetIntDefault("Classic.PetGearScaling.DebugLoadDelayMs", 0) / 1000.0f);
-        SetPreparedQuery(DEBUG_SLEEP, stmt);
     }
 };
 
@@ -442,7 +434,6 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
             {
                 char const* reason = superseded ? "superseded by a newer load" : m_removed ? "removed mid-load" : "owner changed map";
                 TC_LOG_DEBUG("entities.pet", "Pet load cancelled ({}): pet number {} owner {}", reason, petNumber, owner->GetName());
-                session->SendNotification("PETBUG: pet load cancelled (%s) — if the pet does not reappear on its own, resummon it", reason);
             }
             else
                 TC_LOG_DEBUG("entities.pet", "Pet load cancelled: owner session changed, pet number {} — object disposed", petNumber);
@@ -491,7 +482,6 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
             {
                 TC_LOG_ERROR("entities.pet", "pet_scaling: pet {} dressed but scaling aura {} missing (number {} entry {} type {})",
                     GetGUID().ToString(), expectedScalingSpell, petNumber, GetEntry(), uint32(getPetType()));
-                session->SendNotification("PETBUG: pet dressed but scaling aura %u missing — please report what you were doing!", expectedScalingSpell);
             }
         }
 
