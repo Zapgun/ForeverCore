@@ -124,4 +124,205 @@ the client aura. Zero is deliberate, not a gap.
   vanilla items live in db2 only.
 - mysql on 127.0.0.1:3307; creds in worldserver.conf WorldDatabaseInfo.
 - repack console-send.ps1 (ExecutionPolicy Bypass, dot-source) → Send-WorldserverCommand drives
-  the live server console incl. `send items`; Stop-WorldserverSaved is the clean shutdown.
+
+---
+
+# Appendix: original analysis and history (pre-implementation)
+
+## A. The issue with the current core
+
+ForeverCore currently runs **vanilla 1.12 pet stats**: a pet is a fixed stat block per
+level and gets nothing from the owner's gear.
+
+Commit `440d365e79` (Advocaite, "Classic 1.60: vanilla audit", 2026-10-11) deleted
+working owner-inheritance that upstream TrinityCore master carried, replacing each
+block with a vanilla comment:
+
+| Location (StatSystem.cpp) | Deleted upstream behavior | Current state |
+|---|---|---|
+| `Guardian::UpdateStats` ~1456 | +30% owner stam all pets; +30% owner int warlock/mage pets | `// pets get no share of owner's stamina or intellect` (commented out) |
+| `Guardian::UpdateResistances` ~1504 | +40% owner resistances | `// pets do not inherit their owner's resistances` |
+| `Guardian::UpdateArmor` ~1520 | +70% owner armor hunter pets; +100% warlock pets | `// pets do not inherit their owner's armor` |
+| `Guardian::UpdateAttackPowerAndDamage` ~1588 | +22% owner RAP → pet AP, +12.87% → pet dmg | empty `if (IsHunterPet()) {}` |
+| same, ~1602 | demons: +15% max(fire,shadow) → dmg, +57% → AP | empty `else if (IsPet()) {}` |
+
+The WotLK-era aura scripts in `spell_pet.cpp` (34902-34904, 61017, 34947, 34956-58,
+61013…) are dead code: only `spell_gen_pet_calculate` is registered
+(`AddSC_pet_spell_scripts`, line 1630) and `spell_script_names` has **zero** rows for
+any of them, so even a granted aura would never compute an owner-derived amount.
+
+Result: a naked level-60 hunter's cat and a full-T3 hunter's cat are identical —
+3052 hp, 136 str, 3814 armor (`pet_levelstats` entry 1), same damage. On official
+Forever they are visibly different; the inheritance is even displayed in the client
+character sheet's Pet panel.
+
+
+## B. The hidden scaling auras — decoded from client data (verified)
+
+The "hidden scaling aura" the community references is real. Extracted from the
+Forever client's `SpellEffect.db2` / `SpellMisc.db2` / `SkillLineAbility.db2`
+(schema `WOWSTATIC_1_60_1_70399`, decoder: `F:\_dev\tmp\db2scan*.py`):
+
+**Spell 415429 "Hunter Pet Scaling"** — Attr0 `PASSIVE|NO_DISPLAY|NO_LOG`,
+Attr4 **`OWNER_POWER_SCALING`** (`0x02000000`, enum exists at `SharedDefines.h:611`
+but has no engine support — metadata only) `|ALLOW_ENTERING_ARENA`.
+19 `SPELL_EFFECT_APPLY_AURA` (effect 6) slots, all BasePoints=0 → server computes:
+
+| # | Aura type | miscValue | Meaning |
+|---|---|---|---|
+| 0 | 230 `MOD_MAX_HEALTH` | — | +2 HP per owner stam |
+| 1 | 99 `MOD_ATTACK_POWER` | — | 10% max(melee,ranged) AP |
+| 2 | 13 `MOD_DAMAGE_DONE` | mask 126 (all) | pet dmg from owner — coeff. unpublished |
+| 3-7 | 22 `MOD_RESISTANCE` | 4/16/8/32/64 | Fire/Frost/Nature/Shadow/Arcane — coeff. unpublished |
+| 8 | 674 → `MOD_RESISTANCE` | mask 1 | **armor** — 30% (aura 674 maps to MOD_RESISTANCE, `SpellAuraDefines.h:756`) |
+| 9 | 54 `MOD_HIT_CHANCE` | — | melee+ranged hit pass-through |
+| 10 | 55 `MOD_SPELL_HIT_CHANCE` | — | spell hit pass-through |
+| 11 | 319 `MOD_MELEE_HASTE_3` | — | owner haste → pet attack speed |
+| 12 | 65 `MOD_CASTING_SPEED_NOT_STACK` | — | owner haste → pet cast speed |
+| 13 | 52 `MOD_WEAPON_CRIT_PERCENT` | — | 100% max(melee,ranged) crit |
+| 14 | 57 `MOD_SPELL_CRIT_CHANCE` | — | spell crit pass-through |
+| 15 | 418 `MOD_MAX_POWER` | power 2 (Focus) | **BasePts=50** — the only nonzero value: flat +50 focus |
+| 16-17 | 593 (`SPELL_AURA_593`, unmapped) | 4 / 2 | "Mod Combat Result" — likely dodge/parry reducers = expertise carriers |
+| 18 | 49 `MOD_DODGE_PERCENT` | — | owner dodge → pet dodge |
+
+**Spell 416189 "Warlock Pet Scaling"** — same 19-slot layout except the tail:
+slot 15 = `29 MOD_STAT` misc 3 (**Intellect**), 16 = `85 MOD_POWER_REGEN` (mana),
+17-18 = aura 593 misc 4/2, 19 = `135 MOD_HEALING_DONE` misc 126 (all schools).
+
+**Spell 415431 "Avoidance"** — hidden passive, one effect:
+`310 MOD_CREATURE_AOE_DAMAGE_AVOIDANCE`, **BasePts = -50** → −50% AoE damage.
+Confirms the "-50% vs non-player AoE" community figure.
+
+**Bonus find — spell 1293586 "Hunter Guardian Hawk Pet Scaling 01"**:
+3 effects (`342 MOD_MELEE_RANGED_HASTE_2`, `79 MOD_DAMAGE_PERCENT_DONE` mask 127,
+`290 MOD_CRIT_PCT` BonusCoef=1.0), Attr4 `AURA_NEVER_BOUNCES` only — fixed guardian
+scaling, not owner-scaled. Out of scope.
+
+**Grant path (verified negative):** `SkillLineAbility.db2` has 27 rows granting
+415429/416189 to pet-family skill lines (hunter: 203-218, 236, 251, 653-656, 2897,
+3015-16 ≈ 20 families; demons: 188-189, 204-207, 2887 = 7), but every row has
+`AcquireMethod = 0 (Learned)` — `LoadPetFamilySpellsStore` requires
+`AutomaticCharLevel (2)` (`SpellMgr.cpp:6519`), so pets do **not** get these via
+family passives. Official must apply them server-side on summon. We do the same:
+explicit `AddAura` on pet creation by pet type. 415431 has **no** SkillLineAbility
+rows at all — granted by another mechanism (or bundled with the scaling aura on
+official); we apply it alongside.
+
+
+## C. Data checks bundled into the change
+
+1. `pet_levelstats` (world DB): is entry-1 hunter data vanilla or Forever-calibrated?
+   Compare lvl 10/40/60 hp + armor vs 60.tools/official observations; adjust or apply
+   the 115% multiplier accordingly.
+2. Demon `pet_levelstats` rows: apply Nov 6/Nov 10 base-health deltas (+40/lvl VW,
+   +15% imp/VW/succ/incubus) if not already reflected.
+3. Family modifiers (Cat +10% dmg etc., 60.tools table): verify ForeverCore applies
+   them today (probably via family passive spells/`PetFamilySpellsStore` — confirm,
+   add if missing; this is independent of scaling but part of "pet stats correct").
+4. `spell_script_names`: leave the dead 2012-era scaling spells unbound (or clean
+   them up separately — they carry WotLK coefficients that contradict Forever's).
+
+
+## D. Implementation status (2026-11-26)
+
+Branch `pets/gear-scaling` @ `c6b252ed91` in `F:\_dev\ForeverCore-petscaling` —
+11 files, all four feature areas implemented + the fixes below. Instrumentation
+is NOT in the commit; it lives only in the main tree's working copy.
+
+**Bugs found during in-game verification (all fixed unless noted):**
+
+1. **Loader registration** — `AddSC_pet_spell_scripts` was never invoked by
+   `spell_script_loader.cpp`; `spell_pet.cpp` compiled but registered nothing, so
+   `spell_script_names` rows bound to a nonexistent loader and were silently
+   skipped. This is also why the dead upstream Kandera scripts never ran. Fixed
+   by registering it alongside the other spell script files (both trees).
+2. **415431 not passive** — `addSpell` only auto-casts `SPELL_ATTR0_PASSIVE`
+   spells; 415431 is hidden+no-log without the passive bit, so it was filed on
+   the action bar and never applied. Fixed: `CastSpell` directly, and the grant
+   moved to the shared branch so demons get it too (hunter-only was an oversight).
+3. **Fresh-summon aura wipe** — `SavePetToDB(PET_SAVE_AS_CURRENT)` on an
+   unslotted demon left mode=-3, which fell into the `RemoveAllAuras()` branch,
+   stripping every aura (passives included) right after `InitPetCreateSpells` —
+   a brand-new demon's first summon showed literally 0 auras. Fixed: strip only
+   for stable/not-in-slot saves; `PET_SAVE_AS_CURRENT` keeps live auras.
+4. **Intermittent resummon aura-loss — OPEN.** A pet that returns via the
+   `LoadPetFromDB` async path (teleport temp-unsummon/resummon, some relogs)
+   *occasionally* spawns with zero auras — `LearnPetPassives` never ran, meaning
+   the AfterComplete callback bailed early (`session->GetPlayer() != owner ||
+   GetPet() != this` or `m_removed`; likely `IsInWorld()` being false when the
+   DB reply lands). Not reproduced since instrumentation went in; candidate fix
+   is moving `LearnPetPassives` synchronous (it needs no DB data) instead of
+   widening the bail window. Debug layer deployed: `pet_scaling` TC_LOG lines
+   plus in-game `PETBUG:` notifications on every load outcome — if one pops,
+   grep Server.log for the matching `pet load` line.
+
+**Verified in-game:**
+
+- Hunter (bear): health +2/stam, 30% armor, 10% max-AP, crit/dodge/hit
+  pass-throughs, +50 focus, −50 avoidance; zeros on conf-gated slots are
+  deliberate. **Live recalc works** — stam 65→57 on gear removal tracked
+  130→114 in real time.
+- Warlock (imp + voidwalker, incl. fresh warlock char): 416189 applies,
+  +2/stam HP live (35→70, 60→120 after BiS gear), demons get 415431 now,
+  demons persist across relog/teleport.
+- Buff-block: stat buffs rejected on pets ("target is not a player"), as designed.
+
+**Remaining:**
+
+- `pet_levelstats` 115% calibration check (§5.1) — not yet run.
+- Strip debug instrumentation + clean rebuild before PR; PR only after
+  human-confirmed testing (user's rule).
+- Kandera-era dead classes in spell_pet.cpp: remove in a separate cleanup commit.
+
+## E. References
+
+Official/community sources for the numbers:
+
+1. Wowhead BM Hunter guide (Docoda, 2026-11-19) — full hunter stat list incl. avoidance:
+   https://www.wowhead.com/forever/guide/classes/hunter/beast-mastery/overview-pve-dps
+2. Wowhead Demonology guide (Zephan, 2026-11-14) — "pets scale with the player's
+   stats; exact scaling in your character pane":
+   https://www.wowhead.com/forever/guide/classes/warlock/demonology/overview-pve-dps
+3. Mobalytics leveling guide (Kargoz beta testing, 2026-10-22) — same 4 ratios:
+   https://mobalytics.gg/wow-forever/classes/1-60-beast-mastery-hunter-leveling-guide
+4. AzerothCompass hunter pets (2026-11-07) — reference model + "hidden scaling aura"
+   caveat + expertise-unspecified note:
+   https://azerothcompass.com/en/wow-forever/hunter-pets/
+5. wowfdb hunter pets / hunter changes — hit inheritance, 115% (Nov 11), crit=higher
+   of melee/ranged (Oct 15), no player buffs (tested), refresh bug, family modifiers:
+   https://wowfdb.com/classes/hunter/pets/ , https://wowfdb.com/classes/hunter/changes/
+6. wowfdb warlock/Demonology — demons 2hp/stam, spell-power→damage, no stat buffs
+   but shields+heals land (tested):
+   https://wowfdb.com/classes/warlock/ , https://wowfdb.com/classes/warlock/demonology/
+7. 60.tools hunter pets — Oct 15 expertise + crit change, Nov 10 150%→115% health,
+   family modifier table, attack-speed passives:
+   https://www.60.tools/guides/hunter-pets
+8. epiccarry Nov 10 pet changes — warlock base-health +15%, demon 7.5→2 hp/stam
+   (Nov 2), VW +40/lvl (Nov 6), Orc Command fix:
+   https://epiccarry.com/blogs/wow-forever-pet-changes/
+9. Half-Baked Warcraft warlock guide — Nov 2 demon stam 7.5→2:
+   https://halfbakedwarcraft.com/wow-forever-warlock/
+10. wowforeverguides.com — cites Blizzard Nov 2 beta notes (Kaivax post) for 2hp/stam:
+    https://wowforeverguides.com/leveling/warlock
+
+Code evidence (this tree):
+
+- `src/server/game/Entities/Unit/StatSystem.cpp` — disabled inheritance blocks
+  (~1440-1614), propagation points (:120-125, :328, :575, :588-592)
+- `src/server/game/Entities/Unit/Unit.cpp` — `GetUnitCriticalChanceDone` (:3100),
+  `MeleeSpellMissChance` (:13245)
+- `src/server/game/Entities/Pet/Pet.cpp` — `InitStatsForLevel` (:1344), hunter-pet
+  level-formula damage (:1450), `LearnPetPassives` (:2241)
+- `src/server/scripts/Spells/spell_pet.cpp` — dead WotLK scaling scripts; only
+  `spell_gen_pet_calculate` registered (:1630)
+- Client data (decoded, `F:\_dev\tmp\db2scan*.py`):
+  `SpellEffect.db2` — spells 415429/416189/415431/1293586 full effect tables;
+  `SpellMisc.db2` — Attr0 0x1C0 / Attr4 `OWNER_POWER_SCALING`;
+  `SkillLineAbility.db2` — 27 grants to family skill lines, all
+  `AcquireMethod=Learned` (not auto-learned);
+  `CreatureFamily.db2` / `SkillLine.db2` — family↔skillline map
+- `git show 440d365e79 -- src/server/game/Entities/Unit/StatSystem.cpp` — the removed
+  upstream inheritance (author: Advocaite, 2026-10-11)
+- `spell_pet.cpp` git history — original WIP commits by Kandera, June 2012
+  (`69ea6b5d32`, `38424024e6`, `5b8d3f8109`, `76a2d13239`)
+
