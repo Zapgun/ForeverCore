@@ -5080,15 +5080,6 @@ Classic.Hardcore = 0
 #                                                              this slot is used in any era)
 #
 #        Avoidance (-50% AoE damage taken) is carried by spell 415431 itself and needs no coefficient.
-#
-#        Classic.PetGearScaling.DebugLoadDelayMs
-#            Description: DEBUG ONLY - artificial delay (in milliseconds) injected into the pet
-#                         database load, executed as a sleep on the character DB worker. Stretches
-#                         the window where a pet load is in flight so that load-cancel races
-#                         (teleport chains, boats, portals, manual summon racing auto-resummon)
-#                         can be reproduced on demand. 0 disables. Re-read on every pet load,
-#                         so ".reload config" is enough to change it. Never enable in production.
-#            Default:     0
 
 Classic.PetGearScaling = 0
 
