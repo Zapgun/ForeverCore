@@ -104,9 +104,30 @@ the client aura. Zero is deliberate, not a gap.
 
 ## Open items
 
-1. Hunter AP→spell damage end-to-end: tame wind serpent, check eff 2 of 415429 nonzero, then
-   whether Lightning Breath damage actually moves with owner AP. If not, client ability data
-   has zero bonus coefficients and per-ability design work is needed.
+1. ~~Hunter AP→spell damage end-to-end~~ **RESOLVED 2026-11-26 — definitive negative.**
+   Full coefficient sweep of every spell in `classic_pet_tame_spell` (57 distinct) plus demon
+   abilities, decoded from SpellEffect.db2 and field-validated against player spells
+   (Fireball/Frostbolt/Corruption coefficients land exactly where expected):
+   - Lightning Breath all ranks (25008-25012), Scorpid Poison: `BonusCoef=0`, `CoefFromAP=0` —
+     deliberately zeroed. Wind serpent test confirmed: eff 2 moves with gear (23.38 / 13.12)
+     but hits cannot move.
+   - Bite/Claw/beast abilities (17253+, 16827+, 3009/3010): `BonusCoef=1.0` on their damage
+     effects BUT they are physical school, and eff 2's school mask is 126 (all magic schools,
+     no physical bit); `CoefFromAP=0` everywhere. Dead from both directions.
+   - Net: hunter pet ability damage is static in this client. No pet family choice changes it
+     (dragonkin are not even in the tame table). Hunter scaling value arrives through the
+     melee pipeline: verified 10% AP slot driving white swings + crit/hit/haste/armor/HP.
+   - **Demon abilities ARE live consumers**: imp Firebolt (3110) `BonusCoef=0.164`, succubus
+     Lash of Pain (7814) `0.429` — both magic schools the demon aura feeds. Blizzard zeroed
+     the hunter abilities but shipped live demon coefficients, strongly suggesting official
+     intended demon scaling to function and hunter ability scaling not to.
+   - **Verified in-game same day**: Bixby's imp Firebolt hits 11-16 geared vs 7-10 ungeared.
+     ~5 dmg/hit delta ÷ 0.164 ⇒ ~30 pet spell damage from gear ⇒ ~200 owner spell power at
+     the legacy 15% conversion — consistent with the level-60 BiS set. Demon pipeline
+     confirmed end-to-end: gear → owner spellpower → aura recalc → pet damage stat →
+     ability coefficient → bigger hits.
+   - Remaining design question (moved to item 7): whether to homebrew hunter ability
+     coefficients server-side (hotfixes spell_effect overrides) or accept the client cap.
 2. FSR mirror re-test on eff 16 (deploy with regen-mirror build).
 3. Name the two lit resistance schools off the character sheet (expect 44/24 → eff3/eff6).
 4. `DebugLoadDelayMs` race hammer: teleport chains, portals, boats, Call-Pet racing resummon.
@@ -212,10 +233,25 @@ official); we apply it alongside.
 ## C. Data checks bundled into the change
 
 1. `pet_levelstats` (world DB): is entry-1 hunter data vanilla or Forever-calibrated?
-   Compare lvl 10/40/60 hp + armor vs 60.tools/official observations; adjust or apply
-   the 115% multiplier accordingly.
-2. Demon `pet_levelstats` rows: apply Nov 6/Nov 10 base-health deltas (+40/lvl VW,
-   +15% imp/VW/succ/incubus) if not already reflected.
+   **RESOLVED (Nov 26): vanilla.** The October migrations (2026_10_11_15 /
+   2026_10_27_41) state in their own comments that the table is a straight
+   VMaNGOS vanilla import. Official Forever buffs base health +15% over vanilla
+   for all player pets: hunter pets "have 115% of their normal health"
+   (Nov 10/11 hotfix, down from an erroneous 150% at launch — wowfdb hunter pets),
+   and "Imp, Voidwalker, Incubus and Succubus have about 15% more base health"
+   (Nov 11 — wowfdb warlock changes). Same +15% both sides; felhunter
+   deliberately excluded. Armor/mana/stats untouched on official.
+   **Decision (user, Nov 26): ships as its own PR, separate from the aura work**,
+   so Karrz can adopt either independently. Migration prepared at
+   `F:\_dev\tmp\pet_base_health_calibration.sql` (entries 1/416/1860/1863,
+   levels 1-63, hp × 1.15 as fixed DELETE+INSERT values — idempotent).
+   Level-60 reference points: cat 3052→3510, imp 769→884, VW 3459→3978,
+   succubus 1709→1965. Side findings: the Forever Incubus (entry 185335 etc.)
+   has NO pet_levelstats rows at all — falls back to generated defaults,
+   a pre-existing gap. The epiccarry "+40hp/level VW" claim is NOT corroborated
+   by wowfdb's curated warlock change log — treated as unverified beta noise.
+2. Demon `pet_levelstats` rows: folded into item 1 — the +15% demon delta is the
+   same calibration.
 3. Family modifiers (Cat +10% dmg etc., 60.tools table): verify ForeverCore applies
    them today (probably via family passive spells/`PetFamilySpellsStore` — confirm,
    add if missing; this is independent of scaling but part of "pet stats correct").
@@ -269,7 +305,9 @@ is NOT in the commit; it lives only in the main tree's working copy.
 
 **Remaining:**
 
-- `pet_levelstats` 115% calibration check (§5.1) — not yet run.
+- ~~`pet_levelstats` 115% calibration check (§5.1)~~ — done: table confirmed
+  vanilla, +15% migration prepared (`F:\_dev\tmp\pet_base_health_calibration.sql`),
+  decided to ship as a **separate PR** after the aura PR, not yet applied to live DB.
 - Strip debug instrumentation + clean rebuild before PR; PR only after
   human-confirmed testing (user's rule).
 - Kandera-era dead classes in spell_pet.cpp: remove in a separate cleanup commit.
