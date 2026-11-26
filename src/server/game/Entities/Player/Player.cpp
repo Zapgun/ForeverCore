@@ -47,6 +47,7 @@
 #include "Config.h"
 #include "ChatPackets.h"
 #include "ChatTextBuilder.h"
+#include "ClassicManaRegen.h"
 #include "ClassicOpcodes.h"
 #include "ClassicSpellRank.h"
 #include "CinematicMgr.h"
@@ -1693,6 +1694,18 @@ void Player::RegenerateAll()
     for (Powers power : GetPowerTypes())
         if (power != POWER_RUNES)
             Regenerate(power);
+
+    // WoW Forever: the demon scaling aura mirrors the owner's live mana regen rate, so the pet amount must be
+    // recalculated whenever the five-second rule (or an interrupt aura) changes which rate applies
+    bool const manaInterrupted = ClassicManaRegen::IsInterrupted(
+        std::chrono::duration_cast<Milliseconds>(GameTime::Now() - m_manaSpentTimestamp).count(),
+        HasAuraType(SPELL_AURA_INTERRUPT_REGEN));
+    if (manaInterrupted != m_manaRegenInterrupted)
+    {
+        m_manaRegenInterrupted = manaInterrupted;
+        if (Pet* pet = GetPet())
+            pet->RecalculateOwnerScalingAuras();
+    }
 
     // Runes act as cooldowns, and they don't need to send any data
     if (GetClass() == CLASS_DEATH_KNIGHT)
@@ -23649,7 +23662,11 @@ void Player::RemovePet(Pet* pet, PetSaveMode mode, bool returnreagent)
 
     SetMinion(pet, false);
 
-    pet->AddObjectToRemoveList();
+    // A pet still loading is not in the world yet (it enters only once its async load completes) and
+    // the load callback owns the object: it disposes of it when it sees m_removed. Queueing it for map
+    // removal here would free it under the callback's feet.
+    if (!pet->IsLoading())
+        pet->AddObjectToRemoveList();
     pet->m_removed = true;
 
     if (pet->isControlled())

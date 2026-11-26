@@ -2998,6 +2998,9 @@ float Unit::GetUnitDodgeChance(WeaponAttackType attType, Unit const* victim) con
     // Reduce dodge chance by attacker expertise rating
     if (GetTypeId() == TYPEID_PLAYER)
         chance -= ToPlayer()->GetExpertiseDodgeOrParryReduction(attType);
+    // WoW Forever: a pet shares its owner's expertise (official coefficient unpublished — pass-through, conf-gated)
+    else if (IsPet() && GetOwner() && GetOwner()->IsPlayer())
+        chance -= GetOwner()->ToPlayer()->GetExpertiseDodgeOrParryReduction(attType) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_EXPERTISE);
     else
         chance -= GetTotalAuraModifier(SPELL_AURA_MOD_EXPERTISE) / 4.0f;
     return std::max(chance, 0.0f);
@@ -3047,6 +3050,9 @@ float Unit::GetUnitParryChance(WeaponAttackType attType, Unit const* victim) con
     // Reduce parry chance by attacker expertise rating
     if (GetTypeId() == TYPEID_PLAYER)
         chance -= ToPlayer()->GetExpertiseDodgeOrParryReduction(attType);
+    // WoW Forever: a pet shares its owner's expertise (official coefficient unpublished — pass-through, conf-gated)
+    else if (IsPet() && GetOwner() && GetOwner()->IsPlayer())
+        chance -= GetOwner()->ToPlayer()->GetExpertiseDodgeOrParryReduction(attType) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_EXPERTISE);
     else
         chance -= GetTotalAuraModifier(SPELL_AURA_MOD_EXPERTISE) / 4.0f;
     return std::max(chance, 0.0f);
@@ -11708,6 +11714,11 @@ void Unit::ApplyAttackTimePercentMod(WeaponAttackType att, float val, bool apply
 
     UpdateAttackTimeField(att);
     m_attackTimer[att] = uint32(m_baseAttackSpeed[att] * m_modAttackSpeedPct[att] * remainingTimePct);
+
+    // WoW Forever: owner melee haste feeds the pet's hidden scaling aura
+    if (Player* playerOwner = ToPlayer())
+        if (Pet* pet = playerOwner->GetPet())
+            pet->RecalculateOwnerScalingAuras();
 }
 
 void Unit::ApplyCastTimePercentMod(float val, bool apply)
@@ -11724,6 +11735,11 @@ void Unit::ApplyCastTimePercentMod(float val, bool apply)
         ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModSpellHaste), -val, apply);
         ApplyPercentModUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::ModHasteRegen), -val, apply);
     }
+
+    // WoW Forever: owner spell haste feeds the pet's hidden scaling aura
+    if (Player* playerOwner = ToPlayer())
+        if (Pet* pet = playerOwner->GetPet())
+            pet->RecalculateOwnerScalingAuras();
 }
 
 void Unit::UpdateAuraForGroup()

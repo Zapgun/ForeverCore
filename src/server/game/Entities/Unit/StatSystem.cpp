@@ -157,6 +157,10 @@ bool Player::UpdateStats(Stats stat)
     UpdateArmor();
     UpdateSpellDamageAndHealingBonus();
     UpdatePowerRegen(POWER_MANA);
+
+    // WoW Forever: owner stats feed the pet's hidden scaling aura (agility drives crit/dodge here too)
+    if (Pet* pet = GetPet())
+        pet->RecalculateOwnerScalingAuras();
     return true;
 }
 
@@ -213,6 +217,10 @@ void Player::UpdateSpellDamageAndHealingBonus()
         UpdateAttackPowerAndDamage(true);
     }
 
+    // WoW Forever: demon pets scale off the warlock's spell damage
+    if (Pet* pet = GetPet())
+        pet->RecalculateOwnerScalingAuras();
+
     inSpellDamageUpdate = false;
 }
 
@@ -266,7 +274,10 @@ void Player::UpdateResistances(uint32 school)
 
         Pet* pet = GetPet();
         if (pet)
+        {
             pet->UpdateResistances(school);
+            pet->RecalculateOwnerScalingAuras();
+        }
     }
     else
         UpdateArmor();
@@ -325,7 +336,10 @@ void Player::UpdateArmor()
 
     Pet* pet = GetPet();
     if (pet)
+    {
         pet->UpdateArmor();
+        pet->RecalculateOwnerScalingAuras();
+    }
 
     UpdateAttackPowerAndDamage();                           // armor dependent auras update for SPELL_AURA_MOD_ATTACK_POWER_OF_ARMOR
 }
@@ -591,6 +605,10 @@ void Player::UpdateAttackPowerAndDamage(bool ranged)
         if (guardian && guardian->IsSpiritWolf()) // At melee attack power change for Shaman feral spirit
             guardian->UpdateAttackPowerAndDamage();
     }
+
+    // WoW Forever: the pet scaling aura reads max(melee, ranged) AP, so either branch moving matters
+    if (pet)
+        pet->RecalculateOwnerScalingAuras();
 }
 
 void Player::CalculateMinMaxDamage(WeaponAttackType attType, bool normalized, bool addTotalPct, float& minDamage, float& maxDamage) const
@@ -724,6 +742,10 @@ void Player::UpdateCritPercentage(WeaponAttackType attType)
                 applyCritLimit(GetBaseModValue(CRIT_PERCENTAGE, FLAT_MOD) + GetBaseModValue(CRIT_PERCENTAGE, PCT_MOD) + GetRatingBonusValue(CR_CRIT_MELEE)));
             break;
     }
+
+    // WoW Forever: pets inherit the higher melee/ranged crit
+    if (Pet* pet = GetPet())
+        pet->RecalculateOwnerScalingAuras();
 }
 
 void Player::UpdateAllCritPercentages()
@@ -912,6 +934,10 @@ void Player::UpdateDodgePercentage()
          value = value > sWorld->getFloatConfig(CONFIG_STATS_LIMITS_DODGE) ? sWorld->getFloatConfig(CONFIG_STATS_LIMITS_DODGE) : value;
 
     SetUpdateFieldStatValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::DodgePercentage), value);
+
+    // WoW Forever: the hunter scaling aura carries a dodge slot
+    if (Pet* pet = GetPet())
+        pet->RecalculateOwnerScalingAuras();
 }
 
 void Player::UpdateSpellCritChance()
@@ -927,6 +953,10 @@ void Player::UpdateSpellCritChance()
 
     // Store crit value
     SetUpdateFieldValue(m_values.ModifyValue(&Player::m_activePlayerData).ModifyValue(&UF::ActivePlayerData::SpellCritPercentage), crit);
+
+    // WoW Forever: the warlock scaling aura carries a spell crit slot
+    if (Pet* pet = GetPet())
+        pet->RecalculateOwnerScalingAuras();
 }
 
 void Player::UpdateCorruption()
@@ -964,17 +994,27 @@ void Player::UpdateArmorPenetration(int32 amount)
 void Player::UpdateMeleeHitChances()
 {
     m_modMeleeHitChance = GetRatingBonusValue(CR_HIT_MELEE);
+
+    // WoW Forever: pets inherit owner hit through the scaling aura
+    if (Pet* pet = GetPet())
+        pet->RecalculateOwnerScalingAuras();
 }
 
 void Player::UpdateRangedHitChances()
 {
     m_modRangedHitChance = GetRatingBonusValue(CR_HIT_RANGED);
+
+    if (Pet* pet = GetPet())
+        pet->RecalculateOwnerScalingAuras();
 }
 
 void Player::UpdateSpellHitChances()
 {
     m_modSpellHitChance = GetTotalAuraModifier(SPELL_AURA_MOD_SPELL_HIT_CHANCE);
     m_modSpellHitChance += GetRatingBonusValue(CR_HIT_SPELL);
+
+    if (Pet* pet = GetPet())
+        pet->RecalculateOwnerScalingAuras();
 }
 
 void Player::UpdateExpertise(WeaponAttackType attack)
@@ -1120,6 +1160,11 @@ void Player::UpdatePowerRegen(Powers power)
 
     SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::PowerRegenFlatModifier, powerIndex), result_regen);
     SetUpdateFieldValue(m_values.ModifyValue(&Unit::m_unitData).ModifyValue(&UF::UnitData::PowerRegenInterruptedFlatModifier, powerIndex), result_regen_interrupted);
+
+    // WoW Forever: the warlock scaling aura carries a mana regen slot
+    if (power == POWER_MANA)
+        if (Pet* pet = GetPet())
+            pet->RecalculateOwnerScalingAuras();
 }
 
 float Player::GetPowerRegen(Powers power) const

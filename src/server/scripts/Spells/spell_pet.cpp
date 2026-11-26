@@ -28,6 +28,7 @@
 #include "SpellAuraEffects.h"
 #include "SpellMgr.h"
 #include "SpellScript.h"
+#include "World.h"
 
 enum HunterPetCalculate
 {
@@ -1625,7 +1626,227 @@ public:
     }
 };
 
+/* WoW Forever: owner power scaling for permanent pets.
+ * The 1.60.1 client ships two hidden auras — 415429 "Hunter Pet Scaling" (19 effects) and
+ * 416189 "Warlock Pet Scaling" (20 effects) — flagged SPELL_ATTR4_OWNER_POWER_SCALING: every
+ * amount is computed server-side from the owner's stats (BasePoints are all 0 except the
+ * hunter's flat +50 max focus). Pets get the auras in Pet::LearnPetPassives; the amounts are
+ * recomputed live whenever an owner stat moves (Player::Update* calls Pet::RecalculateOwnerScalingAuras).
+ * Coefficients verified on official are the conf defaults; unpublished ones stay conservative
+ * behind Classic.PetGearScaling.* — see doc/forever-pet-scaling-plan.md for the effect table.
+ */
+class spell_forever_pet_scaling : public SpellScriptLoader
+{
+    public:
+        spell_forever_pet_scaling() : SpellScriptLoader("spell_forever_pet_scaling") { }
+
+        class spell_forever_pet_scaling_AuraScript : public AuraScript
+        {
+            bool Load() override
+            {
+                Pet* pet = GetUnitOwner() ? GetUnitOwner()->ToPet() : nullptr;
+                return pet && pet->GetOwner();
+            }
+
+            Player* GetOwnerPlayer() const
+            {
+                if (Pet* pet = GetUnitOwner() ? GetUnitOwner()->ToPet() : nullptr)
+                    return pet->GetOwner();
+                return nullptr;
+            }
+
+            // demons feed off the warlock's strongest of fire / shadow spell damage
+            static float GetDemonSpellPower(Player const* owner)
+            {
+                int32 fire   = owner->m_activePlayerData->ModDamageDonePos[SPELL_SCHOOL_FIRE]   - owner->m_activePlayerData->ModDamageDoneNeg[SPELL_SCHOOL_FIRE];
+                int32 shadow = owner->m_activePlayerData->ModDamageDonePos[SPELL_SCHOOL_SHADOW] - owner->m_activePlayerData->ModDamageDoneNeg[SPELL_SCHOOL_SHADOW];
+                return float(std::max({ fire, shadow, 0 }));
+            }
+
+            // +2 Health per owner Stamina — confirmed for hunter pets and warlock demons (Blizzard Nov 2 hotfix)
+            void CalculateHealth(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += owner->GetStat(STAT_STAMINA) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_STAM_HEALTH);
+            }
+
+            // hunter: 10% of the higher of melee / ranged attack power (verified)
+            // demon: % of the warlock's fire-or-shadow spell power (UNVERIFIED — WotLK-era default)
+            void CalculateAttackPower(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    if (m_scriptSpellId == Pet::SPELL_FOREVER_WARLOCK_PET_SCALING)
+                        amount += GetDemonSpellPower(owner) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DEMON_SPELL_AP);
+                    else
+                        amount += std::max(owner->GetTotalAttackPowerValue(BASE_ATTACK), owner->GetTotalAttackPowerValue(RANGED_ATTACK))
+                            * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_ATTACK_POWER);
+            }
+
+            // hunter: % of max(melee, ranged) attack power, the TBC/WotLK-style conversion that feeds
+            // spell-damage pet abilities (Lightning Breath etc). Owner spellpower itself is confirmed not
+            // to transfer. max() matches the AP slot above; ranged virtually always wins in practice.
+            // demon: % of fire-or-shadow spell power (legacy 0.15, matches the warlock minion table)
+            void CalculateDamageDone(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    if (m_scriptSpellId == Pet::SPELL_FOREVER_WARLOCK_PET_SCALING)
+                        amount += GetDemonSpellPower(owner) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DEMON_SPELL_DAMAGE);
+                    else
+                        amount += std::max(owner->GetTotalAttackPowerValue(BASE_ATTACK), owner->GetTotalAttackPowerValue(RANGED_ATTACK))
+                            * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DAMAGE_DONE);
+            }
+
+            // 30% of owner armor (verified); the armor slot is MOD_RESISTANCE with physical school mask
+            void CalculateArmor(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += owner->GetArmor() * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_ARMOR);
+            }
+
+            // Fire/Frost/Nature/Shadow/Arcane slots, school picked from the effect's misc mask (UNVERIFIED — 0 until measured)
+            void CalculateResistance(AuraEffect const* aurEff, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    for (uint8 school = SPELL_SCHOOL_HOLY; school < MAX_SPELL_SCHOOL; ++school)
+                        if (aurEff->GetMiscValue() & (1 << school))
+                        {
+                            amount += owner->GetResistance(SpellSchools(school)) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_RESISTANCE);
+                            break;
+                        }
+            }
+
+            // the pet rolls the higher of the owner's melee / ranged +hit (verified, Forever merges them anyway)
+            void CalculateMeleeHit(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += (std::max(owner->m_modMeleeHitChance, owner->m_modRangedHitChance) + owner->GetTotalAuraModifier(SPELL_AURA_MOD_HIT_CHANCE))
+                        * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_HIT);
+            }
+
+            void CalculateSpellHit(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += owner->m_modSpellHitChance * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_HIT);
+            }
+
+            // owner melee haste feeds the pet's swing timer (UNVERIFIED coefficient — pass-through default)
+            void CalculateMeleeHaste(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += (1.0f - owner->m_modAttackSpeedPct[BASE_ATTACK]) * 100.0f * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_HASTE);
+            }
+
+            void CalculateCastSpeed(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += (1.0f - *owner->m_unitData->ModCastingSpeed) * 100.0f * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_HASTE);
+            }
+
+            // 100% of the higher melee/ranged crit (verified — the Oct 15 official change)
+            void CalculateMeleeCrit(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += std::max(*owner->m_activePlayerData->CritPercentage, *owner->m_activePlayerData->RangedCritPercentage)
+                        * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_CRIT);
+            }
+
+            void CalculateSpellCrit(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += *owner->m_activePlayerData->SpellCritPercentage * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_CRIT);
+            }
+
+            void CalculateDodge(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += *owner->m_activePlayerData->DodgePercentage * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DODGE);
+            }
+
+            // demon-only tail slots — all UNVERIFIED, 0 until measured on official
+            void CalculateDemonIntellect(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += owner->GetStat(STAT_INTELLECT) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DEMON_INT);
+            }
+
+            void CalculateDemonManaRegen(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += owner->GetPowerRegen(POWER_MANA) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DEMON_REGEN);
+            }
+
+            void CalculateDemonHealingDone(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetOwnerPlayer())
+                    amount += *owner->m_activePlayerData->ModHealingDonePos * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DEMON_HEALING);
+            }
+
+            // the aura-593 slots (client "Mod Combat Result" misc 4/2) have no handler in this core — pin them to 0
+            void CalculateZeroAmount(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                amount = 0;
+                canBeRecalculated = true;
+            }
+
+            void Register() override
+            {
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateHealth,       EFFECT_0,  SPELL_AURA_MOD_MAX_HEALTH);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateAttackPower,  EFFECT_1,  SPELL_AURA_MOD_ATTACK_POWER);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateDamageDone,   EFFECT_2,  SPELL_AURA_MOD_DAMAGE_DONE);
+                for (uint8 i = EFFECT_3; i <= EFFECT_7; ++i)
+                    DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateResistance, i,        SPELL_AURA_MOD_RESISTANCE);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateArmor,        EFFECT_8,  SPELL_AURA_MOD_RESISTANCE);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateMeleeHit,     EFFECT_9,  SPELL_AURA_MOD_HIT_CHANCE);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateSpellHit,     EFFECT_10, SPELL_AURA_MOD_SPELL_HIT_CHANCE);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateMeleeHaste,   EFFECT_11, SPELL_AURA_MOD_MELEE_HASTE_3);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateCastSpeed,    EFFECT_12, SPELL_AURA_MOD_CASTING_SPEED_NOT_STACK);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateMeleeCrit,    EFFECT_13, SPELL_AURA_MOD_WEAPON_CRIT_PERCENT);
+                DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateSpellCrit,    EFFECT_14, SPELL_AURA_MOD_SPELL_CRIT_CHANCE);
+
+                switch (m_scriptSpellId)
+                {
+                    case Pet::SPELL_FOREVER_HUNTER_PET_SCALING:
+                        // EFFECT_15 (+50 max Focus) rides the db2 BasePoints untouched
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateZeroAmount, EFFECT_16, SPELL_AURA_593);
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateZeroAmount, EFFECT_17, SPELL_AURA_593);
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateDodge,      EFFECT_18, SPELL_AURA_MOD_DODGE_PERCENT);
+                        break;
+                    case Pet::SPELL_FOREVER_WARLOCK_PET_SCALING:
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateDemonIntellect,   EFFECT_15, SPELL_AURA_MOD_STAT);
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateDemonManaRegen,   EFFECT_16, SPELL_AURA_MOD_POWER_REGEN);
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateZeroAmount,       EFFECT_17, SPELL_AURA_593);
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateZeroAmount,       EFFECT_18, SPELL_AURA_593);
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_forever_pet_scaling_AuraScript::CalculateDemonHealingDone, EFFECT_19, SPELL_AURA_MOD_HEALING_DONE);
+                        break;
+                    default:
+                        break;
+                }
+            }
+        };
+
+        AuraScript* GetAuraScript() const override
+        {
+            return new spell_forever_pet_scaling_AuraScript();
+        }
+};
+
 void AddSC_pet_spell_scripts()
 {
     new spell_gen_pet_calculate();
+    new spell_forever_pet_scaling();
 }

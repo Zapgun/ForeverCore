@@ -163,6 +163,19 @@ class TC_GAME_API Pet final : public Guardian
         void CastPetAura(PetAura const* aura);
         bool IsPetAura(Aura const* aura);
 
+        // WoW Forever: hidden owner-power-scaling auras in the 1.60.1 client (PASSIVE + no display + no combat
+        // log, flagged SPELL_ATTR4_OWNER_POWER_SCALING; every effect ships BasePoints 0, the server fills them
+        // from the owner's stats, see spell_forever_pet_scaling in spell_pet.cpp). The client grants them
+        // through the pet family skill lines but with AcquireMethod=Learned, so PetFamilySpellsStore skips them;
+        // LearnPetPassives applies them instead. Recalculation is driven from the owner's stat updates.
+        enum ScalingSpells : uint32
+        {
+            SPELL_FOREVER_HUNTER_PET_SCALING  = 415429,   // 19 auras: health, AP, damage, res x5, armor, hit, haste, crit, focus, dodge
+            SPELL_FOREVER_WARLOCK_PET_SCALING = 416189,   // 20 auras: same + intellect, mana regen, healing power
+            SPELL_FOREVER_PET_AVOIDANCE       = 415431    // -50% AoE damage taken
+        };
+        void RecalculateOwnerScalingAuras();
+
         void _LoadAuras(PreparedQueryResult auraResult, PreparedQueryResult effectResult, uint32 timediff);
         void _SaveAuras(CharacterDatabaseTransaction trans);
         void _LoadSpells(PreparedQueryResult result);

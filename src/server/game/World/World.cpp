@@ -738,6 +738,7 @@ void World::LoadConfigSettings(bool reload)
         // and flooded the console ("Missing name Pathfinding.PetLiquidCost", 0.1.37.1)
         { .Name = "Pathfinding.PreferRoads"sv, .DefaultValue = false, .Index = CONFIG_PATHFINDING_PREFER_ROADS },
         { .Name = "Classic.Hardcore"sv, .DefaultValue = false, .Index = CONFIG_CLASSIC_HARDCORE, .Reloadable = false },
+        { .Name = "Classic.PetGearScaling"sv, .DefaultValue = false, .Index = CONFIG_CLASSIC_PET_GEAR_SCALING },
     } };
 
     static constexpr ConfigOptionLoadDefinitionArray<uint32, INT_CONFIG_VALUE_COUNT> ints =
@@ -992,6 +993,25 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "Pathfinding.RoadCostMounted"sv, .DefaultValue = 0.35f, .Index = CONFIG_PATHFINDING_ROAD_COST_MOUNTED },
         { .Name = "Pathfinding.SlopeCoefficient"sv, .DefaultValue = 0.0f, .Index = CONFIG_PATHFINDING_SLOPE_COEFFICIENT },
         { .Name = "Pathfinding.PetLiquidCost"sv, .DefaultValue = 2.5f, .Index = CONFIG_PATHFINDING_PET_LIQUID_COST },
+        // WoW Forever pet gear scaling — see Classic.PetGearScaling (master switch). Verified coefficients ship as
+        // defaults; anything the community could not measure on official stays at a conservative value and is
+        // marked UNVERIFIED so a better number lands as a conf edit, not a rebuild
+        { .Name = "Classic.PetGearScaling.StaminaHealth"sv, .DefaultValue = 2.0f, .Index = CONFIG_CLASSIC_PET_SCALING_STAM_HEALTH, .Min = 0.0f, .Max = 10.0f },
+        { .Name = "Classic.PetGearScaling.ArmorPct"sv, .DefaultValue = 0.30f, .Index = CONFIG_CLASSIC_PET_SCALING_ARMOR, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.AttackPowerPct"sv, .DefaultValue = 0.10f, .Index = CONFIG_CLASSIC_PET_SCALING_ATTACK_POWER, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.CritPct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_CRIT, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.HitPct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_HIT, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.ExpertisePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_EXPERTISE, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.ResistancePct"sv, .DefaultValue = 0.4f, .Index = CONFIG_CLASSIC_PET_SCALING_RESISTANCE, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.DamageDonePct"sv, .DefaultValue = 0.125f, .Index = CONFIG_CLASSIC_PET_SCALING_DAMAGE_DONE, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.HastePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_HASTE, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.DodgePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DODGE, .Min = 0.0f, .Max = 1.0f },
+        // demon slots whose official coefficients were never published (WotLK-era guesses marked UNVERIFIED in conf.dist)
+        { .Name = "Classic.PetGearScaling.DemonSpellPowerToAP"sv, .DefaultValue = 0.57f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_SPELL_AP, .Min = 0.0f, .Max = 2.0f },
+        { .Name = "Classic.PetGearScaling.DemonSpellPowerToDamage"sv, .DefaultValue = 0.15f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_SPELL_DAMAGE, .Min = 0.0f, .Max = 2.0f },
+        { .Name = "Classic.PetGearScaling.DemonIntPct"sv, .DefaultValue = 0.3f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_INT, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.DemonManaRegenPct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_REGEN, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.DemonHealingDonePct"sv, .DefaultValue = 0.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_HEALING, .Min = 0.0f, .Max = 1.0f },
     } };
 
     static constexpr ConfigOptionLoadDefinitionArray<float, MAX_RATES> rates =
