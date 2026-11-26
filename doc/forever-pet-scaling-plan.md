@@ -324,7 +324,9 @@ is NOT in the commit; it lives only in the main tree's working copy.
 
 - ~~`pet_levelstats` 115% calibration check (§5.1)~~ — done: table confirmed
   vanilla, +15% migration prepared (`F:\_dev\tmp\pet_base_health_calibration.sql`),
-  decided to ship as a **separate PR** after the aura PR, not yet applied to live DB.
+  shipped as **its own PR: https://github.com/Karrz1/ForeverCore/pull/418**
+  (branch `pets/base-health-calibration` off upstream/forever, independent of the
+  aura work). Applied to the live DB Nov 26 and verified: boot loaded 2514 rows.
 - Strip debug instrumentation + clean rebuild before PR; PR only after
   human-confirmed testing (user's rule).
 - Kandera-era dead classes in spell_pet.cpp: remove in a separate cleanup commit.
