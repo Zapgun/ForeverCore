@@ -5042,6 +5042,55 @@ Load.Locales = 1
 
 Classic.Hardcore = 0
 
+#    Classic.PetGearScaling
+#        Description: Hunter pets and warlock demons inherit owner stats via the client's hidden
+#                     scaling auras (spells 415429/416189 "Pet Scaling" and 415431 "Avoidance",
+#                     flagged OwnerPowerScaling). Pets stop receiving stat-increasing player buffs;
+#                     heals and proc/offensive buffs still apply. Coefficients below are the
+#                     share of the owner's stat the pet inherits — values marked "verified" come
+#                     from official patch notes / client data, the rest are best-guess defaults
+#                     until measured on official.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+#
+#        Classic.PetGearScaling.StaminaHealth  = 2.0   health gained per owner stamina point (verified)
+#        Classic.PetGearScaling.ArmorPct       = 0.30  share of owner armor (verified)
+#        Classic.PetGearScaling.AttackPowerPct = 0.10  share of max(owner melee, ranged) AP (verified)
+#        Classic.PetGearScaling.CritPct        = 1.0   share of higher melee/ranged crit (verified)
+#        Classic.PetGearScaling.HitPct         = 1.0   share of owner hit chance (verified)
+#        Classic.PetGearScaling.ExpertisePct   = 1.0   share of owner expertise (unverified)
+#        Classic.PetGearScaling.ResistancePct  = 0.0   share of owner resistances (unverified)
+#        Classic.PetGearScaling.DamageDonePct  = 0.0   share of owner spell damage (unverified)
+#        Classic.PetGearScaling.HastePct       = 1.0   share of owner melee/spell haste (unverified)
+#        Classic.PetGearScaling.DodgePct       = 1.0   share of owner dodge (unverified)
+#
+#        Demon-only slots (warlock pet scaling aura):
+#        Classic.PetGearScaling.DemonSpellPowerToAP     = 0.57  share of strongest spell school -> demon AP (unverified)
+#        Classic.PetGearScaling.DemonSpellPowerToDamage = 0.15  share of strongest spell school -> demon damage (unverified)
+#        Classic.PetGearScaling.DemonIntPct             = 0.0   share of owner intellect -> demon mana (unverified)
+#        Classic.PetGearScaling.DemonManaRegenPct       = 0.0   share of owner mana regen (unverified)
+#        Classic.PetGearScaling.DemonHealingDonePct     = 0.0   share of owner healing power (unverified)
+#
+#        Avoidance (-50% AoE damage taken) is carried by spell 415431 itself and needs no coefficient.
+
+Classic.PetGearScaling = 0
+
+Classic.PetGearScaling.StaminaHealth          = 2.0
+Classic.PetGearScaling.ArmorPct               = 0.30
+Classic.PetGearScaling.AttackPowerPct         = 0.10
+Classic.PetGearScaling.CritPct                = 1.0
+Classic.PetGearScaling.HitPct                 = 1.0
+Classic.PetGearScaling.ExpertisePct           = 1.0
+Classic.PetGearScaling.ResistancePct          = 0.0
+Classic.PetGearScaling.DamageDonePct          = 0.0
+Classic.PetGearScaling.HastePct               = 1.0
+Classic.PetGearScaling.DodgePct               = 1.0
+Classic.PetGearScaling.DemonSpellPowerToAP     = 0.57
+Classic.PetGearScaling.DemonSpellPowerToDamage = 0.15
+Classic.PetGearScaling.DemonIntPct             = 0.0
+Classic.PetGearScaling.DemonManaRegenPct       = 0.0
+Classic.PetGearScaling.DemonHealingDonePct     = 0.0
+
 #    Recap.Enable
 #        Description: Record the last seconds around players and let anyone watch a death again
 #                     (".recap <number>", or click [Recap] with the ForeverRecap addon).

@@ -520,8 +520,8 @@ void Pet::SavePetToDB(PetSaveMode mode)
         if (Optional<uint32> activeSlot = owner->GetPetStable()->GetCurrentActivePetIndex())
             mode = PetSaveMode(*activeSlot);
 
-    // stable and not in slot saves
-    if (mode < PET_SAVE_FIRST_ACTIVE_SLOT || mode >= PET_SAVE_LAST_ACTIVE_SLOT)
+    // stable and not in slot saves (PET_SAVE_AS_CURRENT stays with the player — its live auras stay too)
+    if (mode != PET_SAVE_AS_CURRENT && !IsActivePetSlot(PetSaveMode(mode)))
         RemoveAllAuras();
 
     _SaveSpells(trans);
@@ -2261,6 +2261,30 @@ void Pet::LearnPetPassives()
     if (getPetType() == HUNTER_PET)
         if (ClassicPetAttackSpeed::Step const* step = ClassicPetAttackSpeed::ForWildAttackTime(cInfo->BaseAttackTime))
             addSpell(step->spellId, ACT_DECIDE, PETSPELL_NEW, PETSPELL_FAMILY);
+
+    // WoW Forever: permanent pets scale off their owner's gear through a hidden owner-power-scaling aura
+    // (see Pet::ScalingSpells in Pet.h). Official gates it behind warlock demons and every hunter pet family;
+    // guardians and temporary summons keep their own scaling and get neither aura.
+    if (sWorld->getBoolConfig(CONFIG_CLASSIC_PET_GEAR_SCALING))
+    {
+        if (getPetType() == HUNTER_PET)
+            addSpell(SPELL_FOREVER_HUNTER_PET_SCALING, ACT_DECIDE, PETSPELL_NEW, PETSPELL_FAMILY);
+        else if (getPetType() == SUMMON_PET && GetOwner() && GetOwner()->GetClass() == CLASS_WARLOCK)
+            addSpell(SPELL_FOREVER_WARLOCK_PET_SCALING, ACT_DECIDE, PETSPELL_NEW, PETSPELL_FAMILY);
+        else
+            return;
+
+        // 415431 is hidden but not passive (Attr0 0x40190 lacks SPELL_ATTR0_PASSIVE), so
+        // addSpell would only file it on the action bar — cast it to get the aura applied
+        CastSpell(this, SPELL_FOREVER_PET_AVOIDANCE, true);
+    }
+}
+
+void Pet::RecalculateOwnerScalingAuras()
+{
+    for (uint32 spellId : { SPELL_FOREVER_HUNTER_PET_SCALING, SPELL_FOREVER_WARLOCK_PET_SCALING })
+        if (Aura* aura = GetAura(spellId))
+            aura->RecalculateAmountOfEffects();
 }
 
 void Pet::CastPetAuras(bool current)

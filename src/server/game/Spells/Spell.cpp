@@ -8646,6 +8646,56 @@ bool Spell::CheckEffectTarget(Unit const* target, SpellEffectInfo const& spellEf
             break;
     }
 
+    // WoW Forever: stat-increasing buffs do not apply to pets — their stats come from the hidden
+    // owner-scaling aura (415429/416189). Self-cast auras (the scaling passives), proc/offensive
+    // buffs and heals still apply.
+    if (sWorld->getBoolConfig(CONFIG_CLASSIC_PET_GEAR_SCALING) && target->IsPet() && target != m_caster)
+    {
+        switch (spellEffectInfo.ApplyAuraName)
+        {
+            case SPELL_AURA_MOD_STAT:
+            case SPELL_AURA_MOD_PERCENT_STAT:
+            case SPELL_AURA_MOD_TOTAL_STAT_PERCENTAGE:
+            case SPELL_AURA_MOD_ATTACK_POWER:
+            case SPELL_AURA_MOD_RANGED_ATTACK_POWER:
+            case SPELL_AURA_MOD_ATTACK_POWER_PCT:
+            case SPELL_AURA_MOD_RANGED_ATTACK_POWER_PCT:
+            case SPELL_AURA_MOD_DAMAGE_DONE:
+            case SPELL_AURA_MOD_DAMAGE_DONE_CREATURE:
+            case SPELL_AURA_MOD_DAMAGE_DONE_VERSUS:
+            case SPELL_AURA_MOD_HEALING:
+            case SPELL_AURA_MOD_HEALING_PCT:
+            case SPELL_AURA_MOD_HEALING_DONE:
+            case SPELL_AURA_MOD_HEALING_DONE_PERCENT:
+            case SPELL_AURA_MOD_RESISTANCE:
+            case SPELL_AURA_MOD_RESISTANCE_PCT:
+            case SPELL_AURA_MOD_BASE_RESISTANCE:
+            case SPELL_AURA_MOD_REGEN:
+            case SPELL_AURA_MOD_POWER_REGEN:
+            case SPELL_AURA_MOD_POWER_REGEN_PERCENT:
+            case SPELL_AURA_MOD_HEALTH_REGEN_PERCENT:
+            case SPELL_AURA_MOD_MANA_REGEN_INTERRUPT:
+            case SPELL_AURA_MOD_INCREASE_HEALTH:
+            case SPELL_AURA_MOD_INCREASE_HEALTH_PERCENT:
+            case SPELL_AURA_MOD_INCREASE_ENERGY:
+            case SPELL_AURA_MOD_INCREASE_ENERGY_PERCENT:
+            case SPELL_AURA_MOD_INCREASE_SPEED:
+            case SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED:
+            case SPELL_AURA_MOD_INCREASE_SWIM_SPEED:
+            case SPELL_AURA_MOD_INCREASE_FLIGHT_SPEED:
+            case SPELL_AURA_MOD_RATING:
+            case SPELL_AURA_MOD_EXPERTISE:
+            case SPELL_AURA_MOD_WEAPON_CRIT_PERCENT:
+            case SPELL_AURA_MOD_SPELL_CRIT_CHANCE:
+            case SPELL_AURA_MOD_HIT_CHANCE:
+            case SPELL_AURA_MOD_SPELL_HIT_CHANCE:
+            case SPELL_AURA_MOD_ARMOR_PENETRATION_PCT:
+                return false;
+            default:
+                break;
+        }
+    }
+
     // check for ignore LOS on the effect itself
     if (m_spellInfo->HasAttribute(SPELL_ATTR2_IGNORE_LINE_OF_SIGHT) || DisableMgr::IsDisabledFor(DISABLE_TYPE_SPELL, m_spellInfo->Id, nullptr, SPELL_DISABLE_LOS))
         return true;
