@@ -1002,15 +1002,15 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "Classic.PetGearScaling.CritPct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_CRIT, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.HitPct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_HIT, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.ExpertisePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_EXPERTISE, .Min = 0.0f, .Max = 1.0f },
-        { .Name = "Classic.PetGearScaling.ResistancePct"sv, .DefaultValue = 0.0f, .Index = CONFIG_CLASSIC_PET_SCALING_RESISTANCE, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.ResistancePct"sv, .DefaultValue = 0.4f, .Index = CONFIG_CLASSIC_PET_SCALING_RESISTANCE, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.DamageDonePct"sv, .DefaultValue = 0.125f, .Index = CONFIG_CLASSIC_PET_SCALING_DAMAGE_DONE, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.HastePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_HASTE, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.DodgePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DODGE, .Min = 0.0f, .Max = 1.0f },
         // demon slots whose official coefficients were never published (WotLK-era guesses marked UNVERIFIED in conf.dist)
         { .Name = "Classic.PetGearScaling.DemonSpellPowerToAP"sv, .DefaultValue = 0.57f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_SPELL_AP, .Min = 0.0f, .Max = 2.0f },
         { .Name = "Classic.PetGearScaling.DemonSpellPowerToDamage"sv, .DefaultValue = 0.15f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_SPELL_DAMAGE, .Min = 0.0f, .Max = 2.0f },
-        { .Name = "Classic.PetGearScaling.DemonIntPct"sv, .DefaultValue = 0.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_INT, .Min = 0.0f, .Max = 1.0f },
-        { .Name = "Classic.PetGearScaling.DemonManaRegenPct"sv, .DefaultValue = 0.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_REGEN, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.DemonIntPct"sv, .DefaultValue = 0.3f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_INT, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.DemonManaRegenPct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_REGEN, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.DemonHealingDonePct"sv, .DefaultValue = 0.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DEMON_HEALING, .Min = 0.0f, .Max = 1.0f },
     } };
 

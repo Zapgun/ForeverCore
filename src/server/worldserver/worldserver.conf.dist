@@ -5059,7 +5059,9 @@ Classic.Hardcore = 0
 #        Classic.PetGearScaling.CritPct        = 1.0   share of higher melee/ranged crit (verified)
 #        Classic.PetGearScaling.HitPct         = 1.0   share of owner hit chance (verified)
 #        Classic.PetGearScaling.ExpertisePct   = 1.0   share of owner expertise (unverified)
-#        Classic.PetGearScaling.ResistancePct  = 0.0   share of owner resistances (unverified)
+#        Classic.PetGearScaling.ResistancePct  = 0.40  share of owner resistances (40% is the
+#                                                    consistent cross-era figure — Petopia, warlock
+#                                                    minion tables, Cataclysm guides)
 #        Classic.PetGearScaling.DamageDonePct  = 0.125 hunter: share of max(melee, ranged) AP as pet spell
 #                                                    damage (TBC/WotLK lineage; owner spellpower itself
 #                                                    confirmed not to transfer)
@@ -5069,9 +5071,13 @@ Classic.Hardcore = 0
 #        Demon-only slots (warlock pet scaling aura):
 #        Classic.PetGearScaling.DemonSpellPowerToAP     = 0.57  share of strongest spell school -> demon AP (unverified)
 #        Classic.PetGearScaling.DemonSpellPowerToDamage = 0.15  share of strongest spell school -> demon damage (unverified)
-#        Classic.PetGearScaling.DemonIntPct             = 0.0   share of owner intellect -> demon mana (unverified)
-#        Classic.PetGearScaling.DemonManaRegenPct       = 0.0   share of owner mana regen (unverified)
-#        Classic.PetGearScaling.DemonHealingDonePct     = 0.0   share of owner healing power (unverified)
+#        Classic.PetGearScaling.DemonIntPct             = 0.30  share of owner intellect -> demon mana
+#                                                              (warlock minion table / Cataclysm guides)
+#        Classic.PetGearScaling.DemonManaRegenPct       = 1.0   share of owner mana regen — mirrors the
+#                                                              owner's LIVE rate (dips during the
+#                                                              five-second rule); pass-through guess
+#        Classic.PetGearScaling.DemonHealingDonePct     = 0.0   share of owner healing power (no evidence
+#                                                              this slot is used in any era)
 #
 #        Avoidance (-50% AoE damage taken) is carried by spell 415431 itself and needs no coefficient.
 #
@@ -5092,14 +5098,14 @@ Classic.PetGearScaling.AttackPowerPct         = 0.10
 Classic.PetGearScaling.CritPct                = 1.0
 Classic.PetGearScaling.HitPct                 = 1.0
 Classic.PetGearScaling.ExpertisePct           = 1.0
-Classic.PetGearScaling.ResistancePct          = 0.0
-Classic.PetGearScaling.DamageDonePct          = 0.0
+Classic.PetGearScaling.ResistancePct          = 0.40
+Classic.PetGearScaling.DamageDonePct          = 0.125
 Classic.PetGearScaling.HastePct               = 1.0
 Classic.PetGearScaling.DodgePct               = 1.0
 Classic.PetGearScaling.DemonSpellPowerToAP     = 0.57
 Classic.PetGearScaling.DemonSpellPowerToDamage = 0.15
-Classic.PetGearScaling.DemonIntPct             = 0.0
-Classic.PetGearScaling.DemonManaRegenPct       = 0.0
+Classic.PetGearScaling.DemonIntPct             = 0.30
+Classic.PetGearScaling.DemonManaRegenPct       = 1.0
 Classic.PetGearScaling.DemonHealingDonePct     = 0.0
 
 #    Recap.Enable
