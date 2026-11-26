@@ -1003,7 +1003,7 @@ void World::LoadConfigSettings(bool reload)
         { .Name = "Classic.PetGearScaling.HitPct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_HIT, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.ExpertisePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_EXPERTISE, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.ResistancePct"sv, .DefaultValue = 0.0f, .Index = CONFIG_CLASSIC_PET_SCALING_RESISTANCE, .Min = 0.0f, .Max = 1.0f },
-        { .Name = "Classic.PetGearScaling.DamageDonePct"sv, .DefaultValue = 0.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DAMAGE_DONE, .Min = 0.0f, .Max = 1.0f },
+        { .Name = "Classic.PetGearScaling.DamageDonePct"sv, .DefaultValue = 0.125f, .Index = CONFIG_CLASSIC_PET_SCALING_DAMAGE_DONE, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.HastePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_HASTE, .Min = 0.0f, .Max = 1.0f },
         { .Name = "Classic.PetGearScaling.DodgePct"sv, .DefaultValue = 1.0f, .Index = CONFIG_CLASSIC_PET_SCALING_DODGE, .Min = 0.0f, .Max = 1.0f },
         // demon slots whose official coefficients were never published (WotLK-era guesses marked UNVERIFIED in conf.dist)

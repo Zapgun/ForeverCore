@@ -5060,7 +5060,9 @@ Classic.Hardcore = 0
 #        Classic.PetGearScaling.HitPct         = 1.0   share of owner hit chance (verified)
 #        Classic.PetGearScaling.ExpertisePct   = 1.0   share of owner expertise (unverified)
 #        Classic.PetGearScaling.ResistancePct  = 0.0   share of owner resistances (unverified)
-#        Classic.PetGearScaling.DamageDonePct  = 0.0   share of owner spell damage (unverified)
+#        Classic.PetGearScaling.DamageDonePct  = 0.125 hunter: share of max(melee, ranged) AP as pet spell
+#                                                    damage (TBC/WotLK lineage; owner spellpower itself
+#                                                    confirmed not to transfer)
 #        Classic.PetGearScaling.HastePct       = 1.0   share of owner melee/spell haste (unverified)
 #        Classic.PetGearScaling.DodgePct       = 1.0   share of owner dodge (unverified)
 #

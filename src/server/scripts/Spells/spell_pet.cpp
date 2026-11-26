@@ -1684,7 +1684,10 @@ class spell_forever_pet_scaling : public SpellScriptLoader
                             * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_ATTACK_POWER);
             }
 
-            // hunter: UNVERIFIED slot, 0 until measured. demon: % of fire-or-shadow spell power (UNVERIFIED)
+            // hunter: % of max(melee, ranged) attack power, the TBC/WotLK-style conversion that feeds
+            // spell-damage pet abilities (Lightning Breath etc). Owner spellpower itself is confirmed not
+            // to transfer. max() matches the AP slot above; ranged virtually always wins in practice.
+            // demon: % of fire-or-shadow spell power (legacy 0.15, matches the warlock minion table)
             void CalculateDamageDone(AuraEffect const* /*aurEff*/, SpellEffectValue& amount, bool& canBeRecalculated)
             {
                 canBeRecalculated = true;
@@ -1692,7 +1695,8 @@ class spell_forever_pet_scaling : public SpellScriptLoader
                     if (m_scriptSpellId == Pet::SPELL_FOREVER_WARLOCK_PET_SCALING)
                         amount += GetDemonSpellPower(owner) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DEMON_SPELL_DAMAGE);
                     else
-                        amount += owner->GetTotalAttackPowerValue(BASE_ATTACK) * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DAMAGE_DONE);
+                        amount += std::max(owner->GetTotalAttackPowerValue(BASE_ATTACK), owner->GetTotalAttackPowerValue(RANGED_ATTACK))
+                            * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_DAMAGE_DONE);
             }
 
             // 30% of owner armor (verified); the armor slot is MOD_RESISTANCE with physical school mask
