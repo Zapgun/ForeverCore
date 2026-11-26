@@ -243,13 +243,30 @@ official); we apply it alongside.
    deliberately excluded. Armor/mana/stats untouched on official.
    **Decision (user, Nov 26): ships as its own PR, separate from the aura work**,
    so Karrz can adopt either independently. Migration prepared at
-   `F:\_dev\tmp\pet_base_health_calibration.sql` (entries 1/416/1860/1863,
-   levels 1-63, hp × 1.15 as fixed DELETE+INSERT values — idempotent).
-   Level-60 reference points: cat 3052→3510, imp 769→884, VW 3459→3978,
-   succubus 1709→1965. Side findings: the Forever Incubus (entry 185335 etc.)
-   has NO pet_levelstats rows at all — falls back to generated defaults,
-   a pre-existing gap. The epiccarry "+40hp/level VW" claim is NOT corroborated
-   by wowfdb's curated warlock change log — treated as unverified beta noise.
+   `F:\_dev\tmp\pet_base_health_calibration.sql` (entries 1/416/1860/1863 plus
+   incubus 184600/185317, hp as fixed DELETE+INSERT values — idempotent, full
+   references embedded in the file header).
+   Level-60 reference points: cat 3052→3510, imp 769→884, VW 3459→4024,
+   succubus 1709→1965.
+   **Voidwalker +40: CONFIRMED — and it is flat, not per-level.** Blizzard's own
+   rolling hotfix archive (primary source,
+   https://news.blizzard.com/en-us/article/24315281/wow-forever-hotfixes-november-25-2026):
+   Nov 6 "Voidwalker base health increased by about 40 **at all levels**",
+   Nov 10 "Voidwalker base Health increased by ~15%" — so VW = (vanilla+40)×1.15.
+   Independent confirmations: warcrafttavern.com/forever/news/voidwalker-health-increased-wow-forever-hotfixes-for-november-6/,
+   wowforeverguides.com/news/wowforever-hotfixes-raise-voidwalker-health-and-lower-tanning-rack.
+   (wowfdb's curated warlock log simply omits the Nov 6 line — absence there was
+   not evidence of absence.)
+   **Incubus folded in (user, Nov 26):** the Forever succubus-counterpart demon
+   (PET_INCUBUS=184600 in `TemporarySummon.h`, NPC_CWD_INCUBUS=185317 in
+   `classic_talents_warlock_druid.cpp`, mapped to `DemonKind::Succubus`) has NO
+   pet_levelstats rows at all — falls back to generated placeholder stats.
+   Official includes incubus in the +15%, and the migration now mirrors the
+   succubus curve ×1.15 for both entries. Neither has ever been summoned on
+   this server (character_pet empty) — pure upside, zero regression risk.
+   Which entry the summon spell actually spawns is unresolved (client DB2 scan
+   inconclusive — Forever spells may live in hotfix DB2s); if it is a third
+   entry it is no worse off than before.
 2. Demon `pet_levelstats` rows: folded into item 1 — the +15% demon delta is the
    same calibration.
 3. Family modifiers (Cat +10% dmg etc., 60.tools table): verify ForeverCore applies
@@ -316,6 +333,14 @@ is NOT in the commit; it lives only in the main tree's working copy.
 
 Official/community sources for the numbers:
 
+0. **Blizzard rolling hotfix archive (primary source)** —
+   https://news.blizzard.com/en-us/article/24315281/wow-forever-hotfixes-november-25-2026
+   Notable: Nov 6 VW +40 flat; Nov 10 demon +15% / hunter 150%→115% fix /
+   Firebolt r1-4 base damage up; **Nov 25: "Fixed an issue where pets had 0%
+   critical strike chance on melee basic attacks"** (confirms pets are meant to
+   crit with white swings — the aura's owner-crit pass-through is the carrier)
+   **and "Succubus and Incubus had 5% higher critical strike chance than
+   intended"** (implies demons carry a small baseline crit on official).
 1. Wowhead BM Hunter guide (Docoda, 2026-11-19) — full hunter stat list incl. avoidance:
    https://www.wowhead.com/forever/guide/classes/hunter/beast-mastery/overview-pve-dps
 2. Wowhead Demonology guide (Zephan, 2026-11-14) — "pets scale with the player's
