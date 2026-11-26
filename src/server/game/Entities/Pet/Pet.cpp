@@ -430,11 +430,17 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         // owner->GetPet() is NOT a usable validity check here: a not-in-world pet is not resolvable
         // through the owner's object lookup (and it is empty while the owner is out of the world anyway).
         bool ownerValid = session->GetPlayer() == owner;
-        if (!ownerValid || m_removed || owner->GetMap() != map)
+        // A newer load supersedes this one: SetMinion runs synchronously when a load starts, while this
+        // callback always runs after the db reply, so by then the guid already points at the newer pet.
+        // A superseded load must never enter the world — the owner can only ever have one visible pet,
+        // and a second one strands the first as an unlinked zombie that trips the Pet::Update assertion
+        // (live server crash, 26 Nov — bot hunter chain-teleports overlapping two resummon loads).
+        bool superseded = ownerValid && owner->GetPetGUID() != GetGUID();
+        if (!ownerValid || m_removed || owner->GetMap() != map || superseded)
         {
             if (ownerValid)
             {
-                char const* reason = m_removed ? "removed mid-load" : "owner changed map";
+                char const* reason = superseded ? "superseded by a newer load" : m_removed ? "removed mid-load" : "owner changed map";
                 TC_LOG_DEBUG("entities.pet", "Pet load cancelled ({}): pet number {} owner {}", reason, petNumber, owner->GetName());
                 session->SendNotification("PETBUG: pet load cancelled (%s) — if the pet does not reappear on its own, resummon it", reason);
             }
@@ -773,8 +779,10 @@ void Pet::Update(uint32 diff)
             {
                 if (owner->GetPetGUID() != GetGUID())
                 {
+                    // An unlinked pet is a self-healing invariant violation: remove it and log rather than
+                    // assert. Superseded async loads are stopped before they enter the world, but any path
+                    // that slips one through must not take down a live server (it did, 26 Nov).
                     TC_LOG_ERROR("entities.pet", "Pet {} is not pet of owner {}, removed", GetEntry(), GetOwner()->GetName());
-                    ASSERT(getPetType() != HUNTER_PET, "Unexpected unlinked pet found for owner %s", owner->GetSession()->GetPlayerInfo().c_str());
                     Remove(PET_SAVE_NOT_IN_SLOT);
                     return;
                 }
