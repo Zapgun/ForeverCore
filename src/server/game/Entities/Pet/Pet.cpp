@@ -440,6 +440,14 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
             }
             else
                 TC_LOG_DEBUG("entities.pet", "Pet load cancelled: owner session changed, pet number {} — object disposed", petNumber);
+
+            // The owner's pet guid was assigned synchronously when the load began, before the pet
+            // entered the world. Release it so the parked-pet retry can resummon — a dangling guid
+            // would block ResummonPetTemporaryUnSummonedIfAny until relog or manual summon. This is
+            // a no-op if a newer pet already claimed the slot or RemovePet already cleared it.
+            if (ownerValid)
+                owner->SetMinion(this, false);
+
             delete this;
             return;
         }
