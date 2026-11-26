@@ -993,7 +993,10 @@ void Player::Update(uint32 p_time)
     // A moment with no fight and no victim puts the weapons away, as a player's client does.
     if (GetSession()->IsBot())
     {
-        if (GetSheath() == SHEATH_STATE_UNARMED || IsInCombat() || GetVictim() || !IsAlive())
+        // A fight cancels a show's hold on the sheath — post-combat resheath then works as before.
+        if (IsInCombat() || GetVictim())
+            m_botSheathHold = false;
+        if (m_botSheathHold || GetSheath() == SHEATH_STATE_UNARMED || IsInCombat() || GetVictim() || !IsAlive())
             m_botSheathIdleMs = 0;
         else if ((m_botSheathIdleMs += p_time) >= 3000)
         {
@@ -2180,6 +2183,34 @@ void Player::SetGMVisible(bool on)
 
     for (Channel* channel : m_channels)
         channel->SetInvisible(this, !on);
+
+    UpdateInvisibilityVisFlags();
+}
+
+void Player::UpdateInvisibilityVisFlags()
+{
+    // GM-invisible players get the invisibility spell's state visual so their own model renders
+    // the transparent look (like the invisibility potion) as a reminder the flag is on; a real
+    // invisibility aura does the same, so only clear it when neither applies.
+    static int32 gmVisualId = -1;
+    if (gmVisualId < 0)
+    {
+        gmVisualId = 0;
+        for (uint32 spellId : { 11392u, 7870u, 66u, 3680u })   // Invisibility / Lesser Invisibility (potion + succubus + mage)
+            if (SpellInfo const* si = sSpellMgr->GetSpellInfo(spellId, DIFFICULTY_NONE))
+                if (uint32 v = si->GetSpellVisual(this, this))
+                {
+                    gmVisualId = int32(v);
+                    break;
+                }
+    }
+
+    bool show = m_invisibility.GetFlags() != 0 || !isGMVisible();
+    int32 cur = *m_unitData->StateSpellVisualID;
+    if (show && cur != gmVisualId && gmVisualId != 0)
+        SetUpdateFieldValue(m_values.ModifyValue(&Player::m_unitData).ModifyValue(&UF::UnitData::StateSpellVisualID), gmVisualId);
+    else if (!show && cur == gmVisualId && gmVisualId != 0)  // only remove our own visual, quest/other state visuals are not ours to touch
+        SetUpdateFieldValue(m_values.ModifyValue(&Player::m_unitData).ModifyValue(&UF::UnitData::StateSpellVisualID), 0);
 }
 
 bool Player::IsGroupVisibleFor(Player const* p) const
@@ -13965,6 +13996,90 @@ void Player::SwapItem(uint16 src, uint16 dst)
     // impossible merge/fill, do real swap
     InventoryResult msg = EQUIP_ERR_OK;
 
+    // Bag swap with items exchange: a bag in a bag position replaced by an empty bag from storage
+    // hands its contents over to the new bag. The transfer has to happen before the move checks
+    // below, because a non-empty bag validates only into a bag position - the old bag fits its
+    // storage destination only once it is empty. If the swap cannot be completed the items move back.
+    std::vector<std::pair<Item*, uint8>> exchangedItems;
+    Bag* emptyBag = nullptr;
+    Bag* fullBag = nullptr;
+    if (Bag* srcBag = pSrcItem->ToBag())
+    {
+        if (Bag* dstBag = pDstItem->ToBag())
+        {
+            if (srcBag->IsEmpty() && !IsBagPos(src) && !dstBag->IsEmpty())
+            {
+                emptyBag = srcBag;
+                fullBag  = dstBag;
+            }
+            else if (dstBag->IsEmpty() && !IsBagPos(dst) && !srcBag->IsEmpty())
+            {
+                emptyBag = dstBag;
+                fullBag  = srcBag;
+            }
+        }
+    }
+
+    if (emptyBag && fullBag)
+    {
+        ItemTemplate const* emptyProto = emptyBag->GetTemplate();
+
+        uint32 count = 0;
+
+        for (uint32 i = 0; i < fullBag->GetBagSize(); ++i)
+        {
+            Item* bagItem = fullBag->GetItemByPos(i);
+            if (!bagItem)
+                continue;
+
+            ItemTemplate const* bagItemProto = bagItem->GetTemplate();
+            if (!bagItemProto || !ItemCanGoIntoBag(bagItemProto, emptyProto))
+            {
+                // one from items not go to empty target bag
+                SendEquipError(EQUIP_ERR_BAG_IN_BAG, pSrcItem, pDstItem);
+                return;
+            }
+
+            ++count;
+        }
+
+        if (count > emptyBag->GetBagSize())
+        {
+            // too small targeted bag
+            SendEquipError(EQUIP_ERR_CANT_SWAP, pSrcItem, pDstItem);
+            return;
+        }
+
+        // Items exchange, packed at the start of the new bag
+        count = 0;                                      // will pos in new bag
+        for (uint32 i = 0; i < fullBag->GetBagSize(); ++i)
+        {
+            Item* bagItem = fullBag->GetItemByPos(i);
+            if (!bagItem)
+                continue;
+
+            fullBag->RemoveItem(i, true);
+            emptyBag->StoreItem(count, bagItem, true);
+            bagItem->SetState(ITEM_CHANGED, this);
+            exchangedItems.emplace_back(bagItem, i);
+
+            ++count;
+        }
+    }
+
+    auto rollbackItemsExchange = [&]()
+    {
+        for (std::pair<Item*, uint8> const& exchanged : exchangedItems)
+        {
+            uint8 newBagSlot = emptyBag->GetSlotByItemGUID(exchanged.first->GetGUID());
+            if (newBagSlot != NULL_SLOT)
+                emptyBag->RemoveItem(newBagSlot, true);
+            fullBag->StoreItem(exchanged.second, exchanged.first, true);
+            exchanged.first->SetState(ITEM_CHANGED, this);
+        }
+        exchangedItems.clear();
+    };
+
     // check src->dest move possibility
     ItemPosCountVec sDest;
     uint16 eDest = 0;
@@ -13981,6 +14096,7 @@ void Player::SwapItem(uint16 src, uint16 dst)
 
     if (msg != EQUIP_ERR_OK)
     {
+        rollbackItemsExchange();
         SendEquipError(msg, pSrcItem, pDstItem);
         return;
     }
@@ -14004,75 +14120,9 @@ void Player::SwapItem(uint16 src, uint16 dst)
 
     if (msg != EQUIP_ERR_OK)
     {
+        rollbackItemsExchange();
         SendEquipError(msg, pDstItem, pSrcItem);
         return;
-    }
-
-    // Check bag swap with item exchange (one from empty in not bag possition (equipped (not possible in fact) or store)
-    if (Bag* srcBag = pSrcItem->ToBag())
-    {
-        if (Bag* dstBag = pDstItem->ToBag())
-        {
-            Bag* emptyBag = nullptr;
-            Bag* fullBag = nullptr;
-            if (srcBag->IsEmpty() && !IsBagPos(src))
-            {
-                emptyBag = srcBag;
-                fullBag  = dstBag;
-            }
-            else if (dstBag->IsEmpty() && !IsBagPos(dst))
-            {
-                emptyBag = dstBag;
-                fullBag  = srcBag;
-            }
-
-            // bag swap (with items exchange) case
-            if (emptyBag && fullBag)
-            {
-                ItemTemplate const* emptyProto = emptyBag->GetTemplate();
-
-                uint32 count = 0;
-
-                for (uint32 i=0; i < fullBag->GetBagSize(); ++i)
-                {
-                    Item* bagItem = fullBag->GetItemByPos(i);
-                    if (!bagItem)
-                        continue;
-
-                    ItemTemplate const* bagItemProto = bagItem->GetTemplate();
-                    if (!bagItemProto || !ItemCanGoIntoBag(bagItemProto, emptyProto))
-                    {
-                        // one from items not go to empty target bag
-                        SendEquipError(EQUIP_ERR_BAG_IN_BAG, pSrcItem, pDstItem);
-                        return;
-                    }
-
-                    ++count;
-                }
-
-                if (count > emptyBag->GetBagSize())
-                {
-                    // too small targeted bag
-                    SendEquipError(EQUIP_ERR_CANT_SWAP, pSrcItem, pDstItem);
-                    return;
-                }
-
-                // Items swap
-                count = 0;                                      // will pos in new bag
-                for (uint32 i = 0; i< fullBag->GetBagSize(); ++i)
-                {
-                    Item* bagItem = fullBag->GetItemByPos(i);
-                    if (!bagItem)
-                        continue;
-
-                    fullBag->RemoveItem(i, true);
-                    emptyBag->StoreItem(count, bagItem, true);
-                    bagItem->SetState(ITEM_CHANGED, this);
-
-                    ++count;
-                }
-            }
-        }
     }
 
     // now do moves, remove...
@@ -14136,8 +14186,22 @@ void Player::SwapItem(uint16 src, uint16 dst)
                     if (GetLootByWorldObjectGUID(bagItem->GetGUID()))
                     {
                         m_session->DoLootReleaseAll();
+                        released = true;
                         break;
                     }
+                }
+            }
+        }
+
+        // items handed over in a bag swap with items exchange sit in neither scan above
+        if (!released)
+        {
+            for (std::pair<Item*, uint8> const& exchanged : exchangedItems)
+            {
+                if (GetLootByWorldObjectGUID(exchanged.first->GetGUID()))
+                {
+                    m_session->DoLootReleaseAll();
+                    break;
                 }
             }
         }
@@ -26460,6 +26524,8 @@ void Player::UpdateObjectVisibility(bool forced)
     // Prevent updating visibility if player is not in world (example: LoadFromDB sets drunkstate which updates invisibility while player is not in map)
     if (!IsInWorld())
         return;
+
+    UpdateInvisibilityVisFlags();
 
     if (!forced)
         AddToNotify(NOTIFY_VISIBILITY_CHANGED);
