@@ -309,6 +309,13 @@ is NOT in the commit; it lives only in the main tree's working copy.
    plus in-game `PETBUG:` notifications on every load outcome — if one pops,
    grep Server.log for the matching `pet load` line.
 
+**Cross-server validation against official Forever (user, Nov 26):**
+same-level hunter pet with standard non-raid gear — official Forever 841 hp,
+ForeverCore 849 hp at level 20 (delta ~1%, fully explained by minor gear
+variance: 8hp = 4 stamina at 2hp/point). Composition confirmed end-to-end:
+calibrated base table + owner-stat auras reproduce official pet stats.
+"That was the whole point of the exercise — we matched it quite nicely."
+
 **Verified in-game:**
 
 - Hunter (bear): health +2/stam, 30% armor, 10% max-AP, crit/dodge/hit
