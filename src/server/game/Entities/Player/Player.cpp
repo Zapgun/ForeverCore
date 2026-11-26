@@ -23645,7 +23645,11 @@ void Player::RemovePet(Pet* pet, PetSaveMode mode, bool returnreagent)
 
     SetMinion(pet, false);
 
-    pet->AddObjectToRemoveList();
+    // A pet still loading is not in the world yet (it enters only once its async load completes) and
+    // the load callback owns the object: it disposes of it when it sees m_removed. Queueing it for map
+    // removal here would free it under the callback's feet.
+    if (!pet->IsLoading())
+        pet->AddObjectToRemoveList();
     pet->m_removed = true;
 
     if (pet->isControlled())

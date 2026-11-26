@@ -20,6 +20,7 @@
 #include "CharmInfo.h"
 #include "Chat.h"
 #include "Common.h"
+#include "Config.h"
 #include "DatabaseEnv.h"
 #include "DB2Stores.h"
 #include "Group.h"
@@ -180,6 +181,7 @@ public:
         SPELLS,
         COOLDOWNS,
         CHARGES,
+        DEBUG_SLEEP,
 
         MAX
     };
@@ -214,6 +216,13 @@ public:
         stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_PET_SPELL_CHARGES);
         stmt->setUInt32(0, petNumber);
         SetPreparedQuery(CHARGES, stmt);
+
+        // Debug-only artificial delay (Classic.PetGearScaling.DebugLoadDelayMs): the sleep executes on
+        // the character DB worker ahead of delivering the results, stretching the window where the pet
+        // exists but its load has not completed. That makes load-cancel races reproducible on demand.
+        stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_PET_LOAD_DEBUG_SLEEP);
+        stmt->setFloat(0, sConfigMgr->GetIntDefault("Classic.PetGearScaling.DebugLoadDelayMs", 0) / 1000.0f);
+        SetPreparedQuery(DEBUG_SLEEP, stmt);
     }
 };
 
@@ -403,21 +412,37 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
     if (!isTemporarySummon)
         m_charmInfo->LoadPetActionBar(petInfo->ActionBar);
 
-    map->AddToMap(ToCreature());
+    // The pet is deliberately NOT added to the world here. It enters the world only at the end of the
+    // async load below, once auras, spells and passives are all applied: a pet the players can see is
+    // always fully dressed, and a load cancelled in flight leaves nothing but a never-visible object
+    // for the callback to dispose of.
 
     //set last used pet number (for use in BG's)
     if (owner->GetTypeId() == TYPEID_PLAYER && isControlled() && !isTemporarySummoned() && (getPetType() == SUMMON_PET || getPetType() == HUNTER_PET))
         owner->ToPlayer()->SetLastPetNumber(petInfo->PetNumber);
 
     owner->GetSession()->AddQueryHolderCallback(CharacterDatabase.DelayQueryHolder(std::make_shared<PetLoadQueryHolder>(ownerid, petInfo->PetNumber)))
-        .AfterComplete([this, owner, session = owner->GetSession(), isTemporarySummon, current, lastSaveTime = petInfo->LastSaveTime, specializationId = petInfo->SpecializationId](SQLQueryHolderBase const& holder)
+        .AfterComplete([this, owner, session = owner->GetSession(), map, isTemporarySummon, current, lastSaveTime = petInfo->LastSaveTime, specializationId = petInfo->SpecializationId, petNumber = petInfo->PetNumber](SQLQueryHolderBase const& holder)
     {
-        if (session->GetPlayer() != owner || owner->GetPet() != this)
+        // The pet is not in the world yet; this pending load owns the object until it is either completed
+        // (AddToMap below) or disposed of here. Cancellation or invalidation therefore can never strand a
+        // visible half-loaded pet — there is only ever a never-visible object to delete.
+        // owner->GetPet() is NOT a usable validity check here: a not-in-world pet is not resolvable
+        // through the owner's object lookup (and it is empty while the owner is out of the world anyway).
+        bool ownerValid = session->GetPlayer() == owner;
+        if (!ownerValid || m_removed || owner->GetMap() != map)
+        {
+            if (ownerValid)
+            {
+                char const* reason = m_removed ? "removed mid-load" : "owner changed map";
+                TC_LOG_DEBUG("entities.pet", "Pet load cancelled ({}): pet number {} owner {}", reason, petNumber, owner->GetName());
+                session->SendNotification("PETBUG: pet load cancelled (%s) — if the pet does not reappear on its own, resummon it", reason);
+            }
+            else
+                TC_LOG_DEBUG("entities.pet", "Pet load cancelled: owner session changed, pet number {} — object disposed", petNumber);
+            delete this;
             return;
-
-        // passing previous checks ensure that 'this' is still valid
-        if (m_removed)
-            return;
+        }
 
         uint32 timediff = uint32(GameTime::GetGameTime() - lastSaveTime);
         _LoadAuras(holder.GetPreparedResult(PetLoadQueryHolder::AURAS), holder.GetPreparedResult(PetLoadQueryHolder::AURA_EFFECTS), timediff);
@@ -437,6 +462,28 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
 
             CastPetAuras(current);
         }
+
+        // forever-petscaling diagnostics: the dressing above is the sole source of the scaling auras
+        // (they are passive and never round-trip through the database), so verify them right after applying.
+        if (!isTemporarySummon && sWorld->getBoolConfig(CONFIG_CLASSIC_PET_GEAR_SCALING))
+        {
+            uint32 expectedScalingSpell = 0;
+            if (getPetType() == HUNTER_PET)
+                expectedScalingSpell = SPELL_FOREVER_HUNTER_PET_SCALING;
+            else if (getPetType() == SUMMON_PET && owner->GetClass() == CLASS_WARLOCK)
+                expectedScalingSpell = SPELL_FOREVER_WARLOCK_PET_SCALING;
+
+            if (expectedScalingSpell && !HasAura(expectedScalingSpell))
+            {
+                TC_LOG_ERROR("entities.pet", "pet_scaling: pet {} dressed but scaling aura {} missing (number {} entry {} type {})",
+                    GetGUID().ToString(), expectedScalingSpell, petNumber, GetEntry(), uint32(getPetType()));
+                session->SendNotification("PETBUG: pet dressed but scaling aura %u missing — please report what you were doing!", expectedScalingSpell);
+            }
+        }
+
+        // Dressing is complete: only now does the pet enter the world, fully loaded. Players never
+        // see a pet without its auras, spells and passives.
+        map->AddToMap(ToCreature());
 
         TC_LOG_DEBUG("entities.pet", "New Pet has {}", GetGUID().ToString());
 
@@ -485,6 +532,13 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
 void Pet::SavePetToDB(PetSaveMode mode)
 {
     if (!GetEntry())
+        return;
+
+    // A mid-load save would capture the not-yet-dressed pet: its auras, spells and passives are only
+    // applied once the async load completes, and they never round-trip through the database. The rows
+    // already in the database are by definition the newest complete state, so saving now can only lose
+    // data. Abandons still proceed: deleting is independent of the pet's loaded state.
+    if (m_loading && mode != PET_SAVE_AS_DELETED)
         return;
 
     // save only fully controlled creature
