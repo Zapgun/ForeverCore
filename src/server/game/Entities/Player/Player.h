@@ -3212,6 +3212,7 @@ class TC_GAME_API Player final : public Unit, public GridObject<Player>
         GuidList WhisperList;
         TimePoint m_regenInterruptTimestamp;
         TimePoint m_manaSpentTimestamp;                     // Classic 1.60: the five second rule starts when mana is paid, nothing else
+        bool m_manaRegenInterrupted = true;                 // WoW Forever: last sampled FSR state, drives the pet regen-mirror recalc
         uint32 m_graveyardTeleportId = 0;                   // graveyard of a far repop teleport, checked by the worldport ack
         uint32 m_regenTimerCount;
         float m_healthFraction;

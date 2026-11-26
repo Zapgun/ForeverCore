@@ -47,6 +47,7 @@
 #include "Config.h"
 #include "ChatPackets.h"
 #include "ChatTextBuilder.h"
+#include "ClassicManaRegen.h"
 #include "ClassicOpcodes.h"
 #include "ClassicSpellRank.h"
 #include "CinematicMgr.h"
@@ -1689,6 +1690,18 @@ void Player::RegenerateAll()
     for (Powers power : GetPowerTypes())
         if (power != POWER_RUNES)
             Regenerate(power);
+
+    // WoW Forever: the demon scaling aura mirrors the owner's live mana regen rate, so the pet amount must be
+    // recalculated whenever the five-second rule (or an interrupt aura) changes which rate applies
+    bool const manaInterrupted = ClassicManaRegen::IsInterrupted(
+        std::chrono::duration_cast<Milliseconds>(GameTime::Now() - m_manaSpentTimestamp).count(),
+        HasAuraType(SPELL_AURA_INTERRUPT_REGEN));
+    if (manaInterrupted != m_manaRegenInterrupted)
+    {
+        m_manaRegenInterrupted = manaInterrupted;
+        if (Pet* pet = GetPet())
+            pet->RecalculateOwnerScalingAuras();
+    }
 
     // Runes act as cooldowns, and they don't need to send any data
     if (GetClass() == CLASS_DEATH_KNIGHT)
