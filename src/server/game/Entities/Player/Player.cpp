@@ -13856,9 +13856,10 @@ void Player::SwapItem(uint16 src, uint16 dst)
     }
 
     // prevent put equipped/bank bag in self
+    // (note: the modern client renders nothing for EQUIP_ERR_BAG_IN_BAG, keep EQUIP_ERR_CANT_SWAP here)
     if (IsBagPos(src) && srcslot == dstbag)
     {
-        SendEquipError(EQUIP_ERR_BAG_IN_BAG, pSrcItem, pDstItem);
+        SendEquipError(EQUIP_ERR_CANT_SWAP, pSrcItem, pDstItem);
         return;
     }
 
