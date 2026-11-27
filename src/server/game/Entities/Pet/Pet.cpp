@@ -343,30 +343,28 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
     SetReactState(petInfo->ReactState);
     SetCanModifyStats(true);
 
-    if (getPetType() == SUMMON_PET && !current)              //all (?) summon pets come with full health when called, but not when they are current
-        SetFullPower(POWER_MANA);
-    else
-    {
-        uint32 savedhealth = petInfo->Health;
-        uint32 savedmana = petInfo->Mana;
-        // Classic 1.60: hunter pets have no mana; their curmana column keeps the happiness (pets saved before: content).
-        // A dead pet gets it too: loaded without it (its corpse had gone, a relog, a mount or a teleport), Revive Pet brought
-        // it back at 0 happiness, it lost loyalty every tick and a new pet ran away for good soon after (player report, 5 Nov).
-        if (HasHappiness())
-        {
-            SetMaxPower(POWER_HAPPINESS, HAPPINESS_MAX);
-            SetPower(POWER_HAPPINESS, savedmana ? std::min<int32>(savedmana, HAPPINESS_MAX) : HAPPINESS_MAX / 2);
-        }
+    uint32 savedhealth = petInfo->Health;
+    uint32 savedmana = petInfo->Mana;
 
-        if (!savedhealth && getPetType() == HUNTER_PET)
-            setDeathState(JUST_DIED);
-        else
-        {
-            SetHealth(savedhealth);
-            if (!HasHappiness())
-                SetPower(POWER_MANA, savedmana);
-        }
+    // Classic 1.60: hunter pets have no mana; their curmana column keeps the happiness (pets saved before: content).
+    // A dead pet gets it too: loaded without it (its corpse had gone, a relog, a mount or a teleport), Revive Pet brought
+    // it back at 0 happiness, it lost loyalty every tick and a new pet ran away for good soon after (player report, 5 Nov).
+    if (HasHappiness())
+    {
+        SetMaxPower(POWER_HAPPINESS, HAPPINESS_MAX);
+        SetPower(POWER_HAPPINESS, savedmana ? std::min<int32>(savedmana, HAPPINESS_MAX) : HAPPINESS_MAX / 2);
     }
+
+    if (!savedhealth && getPetType() == HUNTER_PET)
+        setDeathState(JUST_DIED);
+
+    // Current health and mana are deliberately NOT restored here: SetHealth/SetPower clamp to their
+    // maxima, and the maxima only reach their final owner-scaled values through the auras applied
+    // while dressing in the load callback. Restoring here clamped both to the unscaled base maxima
+    // and silently discarded the rest — the pet entered the world looking injured, then visibly
+    // regenerated the difference on every login or teleport. Restoration happens at the end of
+    // the load callback instead (all (?) summon pets come with full health when called, but not
+    // when they are current).
 
     // set current pet as current
     // 0-4=current
@@ -414,7 +412,7 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         owner->ToPlayer()->SetLastPetNumber(petInfo->PetNumber);
 
     owner->GetSession()->AddQueryHolderCallback(CharacterDatabase.DelayQueryHolder(std::make_shared<PetLoadQueryHolder>(ownerid, petInfo->PetNumber)))
-        .AfterComplete([this, owner, session = owner->GetSession(), map, isTemporarySummon, current, lastSaveTime = petInfo->LastSaveTime, specializationId = petInfo->SpecializationId, petNumber = petInfo->PetNumber](SQLQueryHolderBase const& holder)
+        .AfterComplete([this, owner, session = owner->GetSession(), map, isTemporarySummon, current, savedhealth, savedmana, lastSaveTime = petInfo->LastSaveTime, specializationId = petInfo->SpecializationId, petNumber = petInfo->PetNumber](SQLQueryHolderBase const& holder)
     {
         // The pet is not in the world yet; this pending load owns the object until it is either completed
         // (AddToMap below) or disposed of here. Cancellation or invalidation therefore can never strand a
@@ -483,6 +481,20 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
                 TC_LOG_ERROR("entities.pet", "pet_scaling: pet {} dressed but scaling aura {} missing (number {} entry {} type {})",
                     GetGUID().ToString(), expectedScalingSpell, petNumber, GetEntry(), uint32(getPetType()));
             }
+        }
+
+        // Current health and mana are restored only now that dressing is complete: SetHealth/SetPower
+        // clamp to their maxima, which have reached their final owner-scaled values through the auras
+        // applied above. Restoring earlier (at load start) clamped both to the unscaled base maxima and
+        // silently discarded the rest — the pet entered the world looking injured, then visibly
+        // regenerated the difference on every login or teleport.
+        if (getPetType() == SUMMON_PET && !current)
+            SetFullPower(POWER_MANA);
+        else if (savedhealth || getPetType() != HUNTER_PET)
+        {
+            SetHealth(savedhealth);
+            if (!HasHappiness())
+                SetPower(POWER_MANA, savedmana);
         }
 
         // Dressing is complete: only now does the pet enter the world, fully loaded. Players never
