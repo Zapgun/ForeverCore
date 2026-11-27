@@ -993,10 +993,7 @@ void Player::Update(uint32 p_time)
     // A moment with no fight and no victim puts the weapons away, as a player's client does.
     if (GetSession()->IsBot())
     {
-        // A fight cancels a show's hold on the sheath — post-combat resheath then works as before.
-        if (IsInCombat() || GetVictim())
-            m_botSheathHold = false;
-        if (m_botSheathHold || GetSheath() == SHEATH_STATE_UNARMED || IsInCombat() || GetVictim() || !IsAlive())
+        if (GetSheath() == SHEATH_STATE_UNARMED || IsInCombat() || GetVictim() || !IsAlive())
             m_botSheathIdleMs = 0;
         else if ((m_botSheathIdleMs += p_time) >= 3000)
         {
