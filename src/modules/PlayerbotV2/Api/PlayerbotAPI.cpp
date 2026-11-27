@@ -4266,7 +4266,9 @@ Result API::stop_attack(bool clear_ghost_combat)
     // Attack off ends Auto Shot as well (a player's attack toggle does); left running it keeps the hunter in the aim pose with no target.
     if (p_->GetClass() == CLASS_HUNTER)
         p_->InterruptSpell(CURRENT_AUTOREPEAT_SPELL, false);
-    if (!p_->IsInCombat())
+    // A station show's sheath hold keeps the tool out — an OOC stop_attack is no
+    // reason to stow it mid-visit (the hold itself drops the moment combat starts).
+    if (!p_->IsInCombat() && !p_->BotSheathHold())
         p_->SetSheath(SHEATH_STATE_UNARMED);
     // Mirror a real client deselecting on disengage Ã¢Â€Â” keeps the published
     // UNIT_FIELD_TARGET truthful for other players' target-of-target frames.
@@ -4976,7 +4978,22 @@ Result API::face_target(ObjectGuid target, bool combat)
     if (!p_) return Result::Other;
     if (target.IsEmpty()) return Result::InvalidTarget;
     Unit* u = ObjectAccessor::GetUnit(*p_, target);
-    if (!u) return Result::InvalidTarget;
+    if (!u)
+    {
+        // A station (anvil, cooking fire, loom): the bot at work faces the gameobject. SetFacingToObject
+        // takes any WorldObject; the same already-facing guard as the unit path skips a no-op turn.
+        if (combat) return Result::InvalidTarget;
+        GameObject* go = p_->GetMap() ? p_->GetMap()->GetGameObject(target) : nullptr;
+        if (!go) return Result::InvalidTarget;
+        if (!p_->isMoving())
+        {
+            ClearStaleMoveFlags(p_);
+            float const off = Position::NormalizeOrientation(p_->GetOrientation() - p_->GetAbsoluteAngle(go));
+            if (off > 0.1f && off < 2.0f * float(M_PI) - 0.1f)
+                p_->SetFacingToObject(go, /*force*/ true);
+        }
+        return Result::Ok;
+    }
     if (combat)
     {
         // Combat re-face. The melee swing needs the victim within +-60 degrees
@@ -6077,6 +6094,27 @@ Result API::set_stand_state(uint8 state)
     return Result::Ok;
 }
 
+Result API::set_sheath(uint8 sheath, int8_t hold)
+{
+    if (!p_) return Result::Other;
+    SheathState const state = sheath > SHEATH_STATE_RANGED ? SHEATH_STATE_UNARMED : static_cast<SheathState>(sheath);
+    p_->SetSheath(state);
+    // Drawn bots get auto-resheathed after 3 idle seconds (Player::Update) — a show
+    // drawing weapons on purpose holds that off until it's resheathed or fights.
+    // hold < 0 keeps that default; a passing call (skill-up cast) draws without it
+    // so the resheath timer cleans the pose up itself when the casts stop.
+    p_->SetBotSheathHold(hold < 0 ? state != SHEATH_STATE_UNARMED : hold != 0);
+    TC_LOG_INFO("playerbot.v2", "[sheath] {} -> state={} now={}", p_->GetName(), uint32(sheath), uint32(p_->GetSheath()));
+    return Result::Ok;
+}
+
+Result API::play_sound(uint32 sound_kit)
+{
+    if (!p_ || !sound_kit) return Result::Other;
+    p_->PlayDistanceSound(sound_kit);
+    return Result::Ok;
+}
+
 Result API::dismiss_pet()
 {
     if (!p_) return Result::Other;
@@ -6779,11 +6817,40 @@ Result API::sell_trash(ObjectGuid npc)
     constexpr uint32 kTightBagThreshold = 3;
     bool const bags_tight = CountFreeBagSlots(p_) <= kTightBagThreshold;
 
+    // Craft surplus: products of recipes the bot knows that aren't also an
+    // input to a known recipe — the smith hawks his sharpening stones, the
+    // cook her baked eggs. Bars / bolts / powders that feed a known recipe
+    // stay as working stock. Conjured outputs (healthstones, mage water)
+    // vendor for nothing — skip them; gear stays under IsBagRot's rules, and
+    // uncommon-or-better products are worth more than the vendor pays.
+    std::unordered_set<uint32> craft_in;
+    std::unordered_set<uint32> craft_out;
+    for (auto const& [sid, ps] : p_->GetSpellMap())
+    {
+        if (ps.state == PLAYERSPELL_REMOVED || !ps.active || ps.disabled) continue;
+        SpellInfo const* si = sSpellMgr->GetSpellInfo(sid, DIFFICULTY_NONE);
+        if (!si) continue;
+        for (SpellEffectInfo const& eff : si->GetEffects())
+            if (eff.Effect == SPELL_EFFECT_CREATE_ITEM && eff.ItemType)
+                craft_out.insert(uint32(eff.ItemType));
+        for (size_t r = 0; r < si->Reagent.size(); ++r)
+            if (si->Reagent[r] > 0)
+                craft_in.insert(uint32(si->Reagent[r]));
+    }
+    for (uint32 const e : craft_in) craft_out.erase(e);
+
     std::vector<Item*> to_sell;
-    p_->ForEachItem(ItemSearchLocation::Inventory, [this, &to_sell, bags_tight](Item* it)
+    p_->ForEachItem(ItemSearchLocation::Inventory, [this, &to_sell, bags_tight, &craft_out](Item* it)
     {
         ItemTemplate const* tmpl = it ? it->GetTemplate() : nullptr;
-        if (IsBagRot(p_, it, tmpl, bags_tight)) to_sell.push_back(it);
+        uint32 const cls = tmpl ? tmpl->GetClass() : 0;
+        if (tmpl && !it->IsNotEmptyBag() && !tmpl->HasFlag(ITEM_FLAG_CONJURED)
+            && tmpl->GetQuality() < ITEM_QUALITY_UNCOMMON
+            && cls != ITEM_CLASS_WEAPON && cls != ITEM_CLASS_ARMOR
+            && craft_out.count(it->GetEntry()))
+            to_sell.push_back(it);
+        else if (IsBagRot(p_, it, tmpl, bags_tight))
+            to_sell.push_back(it);
         return ItemSearchCallbackResult::Continue;
     });
 
@@ -8523,6 +8590,26 @@ Result API::equip_item(uint8 from_bag, uint8 from_slot, uint8 to_slot)
     const uint16 dst = (uint16(INVENTORY_SLOT_BAG_0) << 8) | to_slot;
     p_->SwapItem(src, dst);
     return Result::Ok;
+}
+
+Result API::give_item(uint32 entry, uint16 count)
+{
+    if (!p_) return Result::Other;
+    if (!entry || !count) return Result::InvalidTarget;
+    if (!sObjectMgr->GetItemTemplate(entry)) return Result::InvalidTarget;
+    ItemPosCountVec dest;
+    if (p_->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, entry, count) != EQUIP_ERR_OK)
+        return Result::ServerRefused;
+    return p_->StoreNewItem(dest, entry, true) ? Result::Ok : Result::ServerRefused;
+}
+
+Result API::learn_spell(uint32 spell_id)
+{
+    if (!p_) return Result::Other;
+    if (!spell_id || !sSpellMgr->GetSpellInfo(spell_id, DIFFICULTY_NONE)) return Result::InvalidTarget;
+    if (p_->HasSpell(spell_id)) return Result::Ok;
+    p_->LearnSpell(spell_id, /*dependent=*/false);
+    return p_->HasSpell(spell_id) ? Result::Ok : Result::ServerRefused;
 }
 
 Result API::accept_shared_quest()

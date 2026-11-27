@@ -76,6 +76,10 @@ struct NearTeleportToIntent  { float x, y, z, o; bool navmesh_point = false; }; 
 // owner-useful ones via whisper (sit/stand) but the intent carries the raw
 // byte so future rules (auto-sit on inn furniture etc.) can use the rest.
 struct SetStandStateIntent   { uint8 stand_state; };
+// CMSG_SET_SHEATHED mirror: sheath matches SheathState — 0=UNARMED (hands away),
+// 1=MELEE, 2=RANGED. The station show draws the tool so the smith visibly holds it.
+struct SetSheathIntent       { uint8 sheath; int8_t hold = -1; };
+struct PlaySoundIntent       { uint32 sound_kit; };  // distance sound to everyone in earshot (station-work audio)
 
 // ---- Movement ----
 // direct=true executes a straight MovePoint spline WITHOUT pathfinding ("just
@@ -112,6 +116,8 @@ struct FollowIntent          { ObjectGuid leader; float distance; float angle_ra
 struct UseItemIntent         { uint8 bag, slot; ObjectGuid target; };
 struct UseItemByEntryIntent  { uint32 item_entry; ObjectGuid target; };
 struct EquipItemIntent       { uint8 from_bag, from_slot; uint8 to_slot; };
+struct GiveItemIntent        { uint32 item_entry; uint16 count; };                        // conjure-to-bags (profession tool at its station)
+struct LearnSpellIntent      { uint32 spell_id; };                                        // teach a spell (starter recipe at a craft station)
 struct LootIntent            { ObjectGuid corpse_or_object; bool quest_only = false; };   // quest_only: take only this bot's quest drops
 struct ReleaseCorpseIntent   {};
 struct ReviveAtCorpseIntent  {};
@@ -648,10 +654,10 @@ struct HousingIntent
 using IntentBody = std::variant<
     CastSpellIntent, GroundTargetSpellIntent, CancelCastIntent,
     StartAttackIntent, StopAttackIntent, PetAttackIntent, PetCastSpellIntent,
-    DismissPetIntent, SetStandStateIntent, UnstuckIntent, CancelAuraIntent,
+    DismissPetIntent, SetStandStateIntent, SetSheathIntent, PlaySoundIntent, UnstuckIntent, CancelAuraIntent,
     MoveToIntent, TeleportToIntent, StopMovementIntent, JumpIntent,
     MountIntent, DismountIntent, HearthIntent, FollowIntent,
-    UseItemIntent, UseItemByEntryIntent, EquipItemIntent, LootIntent,
+    UseItemIntent, UseItemByEntryIntent, EquipItemIntent, GiveItemIntent, LearnSpellIntent, LootIntent,
     ReleaseCorpseIntent, ReviveAtCorpseIntent,
     ReclaimCorpseIntent, SpiritResurrectIntent, AcceptRezIntent,
     QuestAcceptIntent, QuestCompleteIntent, QuestAbandonIntent,
@@ -720,17 +726,17 @@ inline size_t IntentKind(Intent const& i) { return i.body.index(); }
 // wedge read as "Dismount | ServerRefused" — diagnosed as the wrong bug on
 // 2026-06-10). The static_asserts force this list to be updated whenever an
 // alternative is added to / removed from IntentBody.
-static_assert(std::variant_size_v<IntentBody> == 101,
+static_assert(std::variant_size_v<IntentBody> == 105,
               "IntentBody changed — update IntentKindName() below to match.");
 inline char const* IntentKindName(size_t kind)
 {
     static constexpr char const* kNames[] = {
         "CastSpell", "GroundTargetSpell", "CancelCast",
         "StartAttack", "StopAttack", "PetAttack", "PetCastSpell",
-        "DismissPet", "SetStandState", "Unstuck", "CancelAura",
+        "DismissPet", "SetStandState", "SetSheath", "PlaySound", "Unstuck", "CancelAura",
         "MoveTo", "TeleportTo", "StopMovement", "Jump",
         "Mount", "Dismount", "Hearth", "Follow",
-        "UseItem", "UseItemByEntry", "EquipItem", "Loot",
+        "UseItem", "UseItemByEntry", "EquipItem", "GiveItem", "LearnSpell", "Loot",
         "ReleaseCorpse", "ReviveAtCorpse",
         "ReclaimCorpse", "SpiritResurrect", "AcceptRez",
         "QuestAccept", "QuestComplete", "QuestAbandon",

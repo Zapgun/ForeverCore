@@ -558,7 +558,8 @@ public:
     // SMSG_EMOTE packet visible to nearby players. `target` is optional and
     // changes the emote's directional cue (wave at someone, etc.).
     Result perform_emote(uint32 emote_id, ObjectGuid target = ObjectGuid::Empty);
-    // Face the bot toward `target` (Unit::SetFacingToObject). Used for RP /
+    // Face the bot toward `target` (Unit::SetFacingToObject; also resolves a gameobject — a bot at a
+    // craft station faces the anvil). Used for RP /
     // screenshots / pet-pose alignment. Returns InvalidTarget when the named
     // object isn't visible from the bot's map.
     // combat = true: re-face a fight victim (see PlayerbotAPI.cpp): turns only a standing,
@@ -689,6 +690,10 @@ public:
     // raw byte mirrors UnitStandStateType. ServerRefused mid-cast since
     // sitting cancels the cast; otherwise idempotent.
     Result set_stand_state(uint8 state);
+    // Draw or stow the visible weapons (SheathState: 0=UNARMED, 1=MELEE,
+    // 2=RANGED). The station show draws the tool; combat paths manage it themselves.
+    Result set_sheath(uint8 sheath, int8_t hold = -1);
+    Result play_sound(uint32 sound_kit);
 
     // Inventory
     // `target` may be a unit or one of the bot's own items (a poison or
@@ -740,6 +745,15 @@ public:
     // Returns InvalidTarget when the source slot is empty, Locked when the
     // destination can't be unequipped (cursed gear / quest item).
     Result equip_item(uint8 from_bag, uint8 from_slot, uint8 to_slot);
+
+    // Put `count` of an item entry into the bot's bags (the same CanStoreNewItem +
+    // StoreNewItem the setup pipeline uses — a profession tool granted at its
+    // station). InvalidTarget = unknown entry; ServerRefused = bags full.
+    Result give_item(uint32 entry, uint16 count);
+
+    // Teach the bot a spell it doesn't yet know — the starter recipe a craft-
+    // station visit grants, backfilling bots set up before DoLearnProfessions.
+    Result learn_spell(uint32 spell_id);
 
     // ---- Group loot --------------------------------------------------
     // Cast the bot's vote on a master/group loot roll. `loot_object` is

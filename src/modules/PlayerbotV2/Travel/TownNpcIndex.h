@@ -41,6 +41,15 @@ struct TownNpc
     uint8  trainer_class = 0;  // creature_template.trainer_class (class trainers)
     bool   alliance_ok  = false;
     bool   horde_ok     = false;
+    // Gameobject craft stations (the _focus index) only: the SpellFocusObject id
+    // the object carries (anvil, forge, cooking fire, loom, moonwell) and its
+    // TownErrand::Kind as uint8 (0 = not a station we use). Plain NPC spawns
+    // and mailboxes leave both 0.
+    uint32 focus_type   = 0;
+    uint8  focus_kind   = 0;
+    // The way the spawn faces (creature spawns only, -1 = none): its customer side — a banker faces the queue,
+    // an auctioneer the hall. Stand points fan out on that side, never behind the counter.
+    float  orientation  = -1.f;
 
     bool usable_by(bool alliance) const { return alliance ? alliance_ok : horde_ok; }
 };
@@ -76,6 +85,13 @@ public:
     void ForEachMailboxNear(uint32 map, float x, float y, float radius,
                             std::function<void(TownNpc const&)> const& fn) const;
 
+    // Calls fn for every craft-station object (a gameobject carrying a spell
+    // focus: anvils, forges, cooking fires, looms, moonwells) on `map` within
+    // `radius` (2D) of (x,y). Like mailboxes they are kept apart from the
+    // service NPCs so they never count as a town's NPCs.
+    void ForEachFocusNear(uint32 map, float x, float y, float radius,
+                          std::function<void(TownNpc const&)> const& fn) const;
+
     // True when any auctioneer spawn (either side) stands within `radius`.
     // Cheap gate for the snapshot builder's auction-house scan.
     bool AuctioneerNear(uint32 map, float x, float y, float radius) const;
@@ -92,6 +108,7 @@ private:
 
     std::unordered_map<uint32, MapGrid> _maps;
     std::unordered_map<uint32, std::vector<TownNpc>> _mail;   // map -> mailbox object spawns
+    std::unordered_map<uint32, std::vector<TownNpc>> _focus;  // map -> craft-station object spawns
     size_t _count = 0;
     std::atomic<bool> _initialized{false};
 };

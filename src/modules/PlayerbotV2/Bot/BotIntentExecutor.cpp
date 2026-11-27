@@ -320,6 +320,8 @@ struct IntentVisitor
     Result operator()(PetCastSpellIntent const& i)     { return api.pet_cast(i.spell_id, i.target); }
     Result operator()(DismissPetIntent const&)         { return api.dismiss_pet(); }
     Result operator()(SetStandStateIntent const& i)    { return api.set_stand_state(i.stand_state); }
+    Result operator()(SetSheathIntent const& i)        { return api.set_sheath(i.sheath, i.hold); }
+    Result operator()(PlaySoundIntent const& i)          { return api.play_sound(i.sound_kit); }
     // SayChat/YellChat/EmoteChat/GuildChat/RaidChat/OfficerChat/RaidWarning/
     // Whisper/PartyChat are bundled into `ChatIntent`. See operator()(ChatIntent).
     Result operator()(UnstuckIntent const& i)          { return api.unstuck(i.distance); }
@@ -423,6 +425,8 @@ struct IntentVisitor
     Result operator()(LootRollIntent const& i)         { return api.loot_roll(i.loot_object, i.loot_list_id, i.vote_type); }
     Result operator()(BindHomebindIntent const& i)     { return api.bind_homebind(i.innkeeper); }
     Result operator()(EquipItemIntent const& i)        { return api.equip_item(i.from_bag, i.from_slot, i.to_slot); }
+    Result operator()(GiveItemIntent const& i)         { return api.give_item(i.item_entry, i.count); }
+    Result operator()(LearnSpellIntent const& i)       { return api.learn_spell(i.spell_id); }
 
     // ---- Subsystem-wrapper handlers (variant-pressure relief) ----
     //

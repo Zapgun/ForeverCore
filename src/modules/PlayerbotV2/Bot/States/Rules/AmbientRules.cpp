@@ -31,9 +31,15 @@
 #include "Bot/TownErrand.h"
 #include "Bot/TownErrandConfig.h"
 #include "Bot/ClassicUpkeep.h"
+#include "Bot/RecipeDifficulty.h"
 #include "Combat/Apl/ApClassicHeal.h"   // idle:kind_heal: the class heal and its rank
 #include "ClassicSpec.h"                // Classic::IsSingleSpecClass
 #include "SharedDefines.h"
+#include "Player.h"   // EQUIPMENT_SLOT_MAINHAND for the station-tool swap
+#include "GameObjectData.h"
+#include "ObjectMgr.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
 #include "Fleet/GateDuels.h"
 #include "Fleet/Gathering.h"
 #include "Fleet/StrangerBoard.h"
@@ -920,9 +926,10 @@ bool InnRestFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, 
         InnLog(s, "inn is full, goes on errands", bx, by);
         return false;
     }
-    // Stand a few yards from the innkeeper, on the side the bot comes from, each bot in its own slot of a fan so they stand side by side.
+    // Stand a few yards from the innkeeper on its customer side (the spawn's facing — the innkeeper looks at the
+    // room, never into the counter or a wall), each bot in its own slot of a fan so they stand side by side.
     float tx, ty;
-    TE::StandPoint(inn->x, inn->y, bx, by, kInnStandYards + float(slot / 5u) * 1.5f, slot, tx, ty);
+    TE::StandPoint(inn->x, inn->y, bx, by, kInnStandYards + float(slot / 5u) * 1.5f, slot, tx, ty, inn->orientation);
     // The stand point is a straight line from the innkeeper and can sit behind a wall; the inn is the goal, so a bot that is within a
     // few yards of the innkeeper, or that cannot get closer than a room's width, rests where it is.
     float const to_inn = std::hypot(bx - inn->x, by - inn->y);
@@ -994,10 +1001,12 @@ bool MailboxFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const&, 
 
 // ---------- idle:town_errand ----------
 // A capital's residents go about their business (Bot/TownErrand.h): each runs to a real place anywhere in the city (the auction house,
-// the bank, its class trainer, the inn, a mailbox, the flight master, a vendor, now and then the city gate), stops there a few seconds
-// facing the NPC, and runs straight on to the next place. The walk is one pathed move to the place, so the bot runs a smooth line
-// through the streets and past the player, instead of the 25 y random wander hops with a stop and a turn at each. Every place holds a
-// few bots at once (SpotCap); a bot finding one full picks another.
+// the bank, its class trainer, the inn, a mailbox, the flight master, a vendor, a craft station, now and then the city gate), stops
+// there a while — a few seconds at a trainer, half a minute at the bank or the auction house, a minute working at an anvil — and
+// runs straight on to the next place. The walk is one pathed move to the place, so the bot runs a smooth line through the streets
+// and past the player, instead of the 25 y random wander hops with a stop and a turn at each. Every place holds a few bots at once
+// (SpotCap); a bot finding one full picks another. The Fixture.* counts keep a guaranteed share of bots at the places a living
+// city never leaves empty — always someone at the bank, never the same someone for long.
 constexpr uint32 kErrandWalkTimeoutMs = 120000u;
 constexpr uint32 kErrandStaleMs = 180000u;
 constexpr uint64 kGateKeyBase = 0xE0000000ull;
@@ -1017,6 +1026,20 @@ static uint32 PlaceCap(TE::Kind k)
     if (k == TE::Kind::Mailbox) return std::max<uint32>(1u, c.mailbox_cap);
     if (k == TE::Kind::Exit) return c.spot_cap * 4u;   // a road: the bots leaving by it walk straight through
     return c.spot_cap;
+}
+
+// The bot's own trade skill makes the station it can really work at the more convincing visit (and lets the linger
+// cast a real recipe): a smith at the anvil, a cook at the fire, a tailor at the loom or moonwell.
+static bool CraftKindMatch(TE::Kind k, BotSnapshotView const& s)
+{
+    switch (k)
+    {
+        case TE::Kind::Forge:    return s.has_skill(164) || s.has_skill(202) || s.has_skill(186);  // blacksmithing, engineering, mining
+        case TE::Kind::Cookfire: return s.has_skill(185);                                          // cooking
+        case TE::Kind::Loom:     return s.has_skill(197);                                          // tailoring needs no station — the loom is a shop, not a requirement
+        case TE::Kind::Moonwell: return s.skill_value(197) >= 250;                                 // moonwell work starts at Mooncloth (Tailoring 250)
+        default:                 return false;
+    }
 }
 
 // The places of the city within ErrandRadius of (bx, by) that this bot has a reason to go to.
@@ -1042,12 +1065,22 @@ static void TownDests(BotSnapshotView const& s, float bx, float by, float bz, st
         else if ((f & UNIT_NPC_FLAG_TRAINER) && n.trainer_class != 0 && n.trainer_class == s.cls()) k = TE::Kind::Trainer;
         else if (f & (UNIT_NPC_FLAG_VENDOR_MASK | UNIT_NPC_FLAG_REPAIR)) { k = TE::Kind::Vendor; if (need_vendor) boost = 5.0f; }
         if (k == TE::Kind::None) return;
-        out.push_back({ k, n.spawn_id, n.entry, n.x, n.y, n.z, TE::BaseWeight(k) * boost });
+        out.push_back({ k, n.spawn_id, n.entry, n.x, n.y, n.z, TE::BaseWeight(k) * boost, 0u, n.orientation });
     });
     ::Playerbot::V2::Travel::TownNpcIndex::Instance().ForEachMailboxNear(s.map_id(), bx, by, c.radius, [&](::Playerbot::V2::Travel::TownNpc const& n)
     {
         if (std::fabs(n.z - bz) > kLayerYards) return;
         out.push_back({ TE::Kind::Mailbox, n.spawn_id, 0u, n.x, n.y, n.z, TE::BaseWeight(TE::Kind::Mailbox) });
+    });
+    // The craft stations (anvil, forge, cooking fire, loom, moonwell) the town's gameobjects carry: a bot stops
+    // there to work like a player does — but only a bot with the trade for it, so the smith at the anvil is a
+    // real smith (the tool in hand, a recipe it can really cast), never a priest miming.
+    ::Playerbot::V2::Travel::TownNpcIndex::Instance().ForEachFocusNear(s.map_id(), bx, by, c.radius, [&](::Playerbot::V2::Travel::TownNpc const& n)
+    {
+        if (!n.focus_kind || std::fabs(n.z - bz) > kLayerYards) return;
+        TE::Kind const k = TE::Kind(n.focus_kind);
+        if (!CraftKindMatch(k, s)) return;
+        out.push_back({ k, n.spawn_id, 0u, n.x, n.y, n.z, TE::BaseWeight(k) * 2.5f, n.focus_type });
     });
     if (c.exits)
     {
@@ -1058,12 +1091,34 @@ static void TownDests(BotSnapshotView const& s, float bx, float by, float bz, st
     }
 }
 
-static void EndErrand(BotSnapshotView const& s, TE::State& st, bool done)
+static uint32 StationToolEntry(TE::Kind kind, BotSnapshotView const& s);   // defined below with the recipe table
+
+static void EndErrand(BotSnapshotView const& s, BotIntentEmitter& emit, TE::State& st, bool done)
 {
+    if (st.work_emote)
+        emit.perform_emote(EMOTE_STATE_NONE);   // a looped work emote stops when the bot moves off
+    if (st.tool_in_hand)
+    {
+        // The swap back: the displaced weapon sits in the tool's bag slot. An empty slot means the
+        // mainhand was empty when the tool went in — nothing to restore. The slot holding the tool
+        // itself means a gear rule already put the weapon back on — leave it alone.
+        for (auto const& it : s.raw().inventory.bag_items)
+            if (it.bag == st.tool_bag && it.slot == st.tool_slot && it.entry != StationToolEntry(st.kind, s))
+            {
+                emit.equip_item(st.tool_bag, st.tool_slot, EQUIPMENT_SLOT_MAINHAND);
+                break;
+            }
+        emit.set_sheath(SHEATH_STATE_UNARMED);   // the show drew the weapons; hands away again at idle
+    }
     if (st.place) TE::Spots::Get().Release(st.place, s.bot_id());
     if (st.key) st.recent.add(st.key);
     if (done) ++st.errands;
+    bool const had_show = st.work_emote;
     st.Clear();
+    // A visit that ran the work show ends on a beat — the smith wipes his hands before
+    // he walks. Without it the next pick's move_to lands the same tick the emote drops
+    // and the client slides him out of a mid-swing pose.
+    if (had_show) st.pause_until_ms = s.published_at_ms() + 1500u;
 }
 
 // A bot placed in the town by the spawner (TownPct) is in its profession mode for 45-90 minutes and lives there. Any other bot in a
@@ -1079,6 +1134,36 @@ static bool TownTime(BotSnapshotView const& s, BotAI& ai, uint32 now_ms)
 
 constexpr uint32 kLeaveMs = 10u * 60u * 1000u;   // out at the gate: this long with no errands, grind_roam leads the bot off
 
+// Claim a stand slot at `d` and open the errand there. False when the place filled in the meantime.
+static bool TakeErrand(BotSnapshotView const& s, TE::State& st, TE::Dest const& d, bool leaving, uint32 now_ms)
+{
+    float bx, by, bz;
+    s.position(bx, by, bz);
+    uint64 const place = TE::Spots::PlaceKey(s.map_id(), d.x, d.y);
+    uint32 slot = 0;
+    if (!TE::Spots::Get().Claim(place, s.bot_id(), now_ms, kSpotHoldMs, PlaceCap(d.kind), &slot))
+        return false;
+    st.Clear();
+    if (d.kind == TE::Kind::Vendor) st.want_vendor = false;   // the sell the last visit couldn't do
+    st.kind = d.kind; st.key = d.key; st.place = place; st.entry = d.entry; st.slot = slot;
+    st.focus_type = d.focus_type;
+    st.leaving = leaving;
+    st.nx = d.x; st.ny = d.y; st.nz = d.z;
+    float ring = 3.5f + float(slot / 5u) * 1.5f;
+    if      (d.kind == TE::Kind::Mailbox) ring = 2.5f;
+    else if (d.kind == TE::Kind::Exit)    ring = 3.0f + float(slot % 6u) * 1.5f;
+    else if (TE::IsCraftKind(d.kind))     ring = 2.8f + float(slot % 3u) * 0.7f;   // right at the anvil: two smiths share the fire
+    TE::StandPoint(d.x, d.y, bx, by, ring, slot, st.tx, st.ty, d.orientation);
+    st.tz = d.z;
+    st.phase = 1;
+    st.phase_start_ms = now_ms;
+    // One bot in 16 logs its errands, so a soak shows where residents go without a line per errand of every bot.
+    if (s.bot_id() % 16u == 0u)
+        TC_LOG_INFO("playerbot.v2", "[town] {} -> {} ({:.0f},{:.0f}) {:.0f} y slot {} (zone {})",
+                    s.name(), TE::KindName(d.kind), d.x, d.y, std::hypot(d.x - bx, d.y - by), slot, s.zone_id());
+    return true;
+}
+
 // Choose the next place and claim a stand slot there. False when the city offers nothing.
 static bool PickErrand(BotSnapshotView const& s, BotAI& ai, TE::State& st, uint32 now_ms)
 {
@@ -1092,6 +1177,11 @@ static bool PickErrand(BotSnapshotView const& s, BotAI& ai, TE::State& st, uint3
         && std::any_of(dests.begin(), dests.end(), [](TE::Dest const& d) { return d.kind == TE::Kind::Exit; });
     if (leaving)
         std::erase_if(dests, [](TE::Dest const& d) { return d.kind != TE::Kind::Exit; });
+    // A kit visit that couldn't start for full bags sent the bot to sell first: the next
+    // errand is a vendor when one's in reach (cleared when the vendor errand is taken).
+    if (!leaving && st.want_vendor
+        && std::any_of(dests.begin(), dests.end(), [](TE::Dest const& d) { return d.kind == TE::Kind::Vendor; }))
+        std::erase_if(dests, [](TE::Dest const& d) { return d.kind != TE::Kind::Vendor; });
     if (dests.empty()) return false;
     uint64 const bot = s.bot_id();
     uint32 const map = s.map_id();
@@ -1102,30 +1192,323 @@ static bool PickErrand(BotSnapshotView const& s, BotAI& ai, TE::State& st, uint3
     if (!leaving && ai.hearth_rebind_due(s.zone_id())
         && std::any_of(dests.begin(), dests.end(), [&](TE::Dest const& d) { return d.kind == TE::Kind::Inn && !full(d); }))
         std::erase_if(dests, [](TE::Dest const& d) { return d.kind != TE::Kind::Inn; });
+    // Fixture places (Playerbot.World.Town.Fixture.*): a bank, auction house or craft station below its guaranteed share of bots
+    // draws the next errand before the usual weighted pick. The claim still decides: once `want` bots hold the place (bots on
+    // their way there count), the steering stops, so the fill cannot over-shoot and the crowd at a place keeps rotating.
+    if (!leaving)
+    {
+        std::vector<TE::Dest> under;
+        for (TE::Dest const& d : dests)
+        {
+            uint32 want = TE::FixtureTarget(TE::Cfg(), d.kind);
+            if (!want) continue;
+            uint64 const place = TE::Spots::PlaceKey(map, d.x, d.y);
+            if (TE::Spots::Get().Count(place, now_ms) >= std::min(want, PlaceCap(d.kind))) continue;
+            if (full(d)) continue;
+            under.push_back(d);
+        }
+        if (!under.empty())
+        {
+            int const k = TE::Pick(under, bx, by, TE::Cfg().radius, st.recent, float(ai.rng().unit()),
+                                   [](TE::Dest const&) { return false; });
+            if (k >= 0 && TakeErrand(s, st, under[size_t(k)], leaving, now_ms))
+                return true;
+        }
+    }
     int const k = TE::Pick(dests, bx, by, TE::Cfg().radius, leaving ? TE::Recent{} : st.recent, float(ai.rng().unit()), full);
     if (k < 0) return false;
-    TE::Dest const& d = dests[size_t(k)];
-    uint64 const place = TE::Spots::PlaceKey(map, d.x, d.y);
-    uint32 slot = 0;
-    if (!TE::Spots::Get().Claim(place, bot, now_ms, kSpotHoldMs, PlaceCap(d.kind), &slot))
-        return false;
-    st.Clear();
-    st.kind = d.kind; st.key = d.key; st.place = place; st.entry = d.entry; st.slot = slot;
-    st.leaving = leaving;
-    st.nx = d.x; st.ny = d.y; st.nz = d.z;
-    float const ring = d.kind == TE::Kind::Mailbox ? 2.5f : d.kind == TE::Kind::Exit ? 3.0f + float(slot % 6u) * 1.5f : 3.5f + float(slot / 5u) * 1.5f;
-    TE::StandPoint(d.x, d.y, bx, by, ring, slot, st.tx, st.ty);
-    st.tz = d.z;
-    st.phase = 1;
-    st.phase_start_ms = now_ms;
-    // One bot in 16 logs its errands, so a soak shows where residents go without a line per errand of every bot.
-    if (s.bot_id() % 16u == 0u)
-        TC_LOG_INFO("playerbot.v2", "[town] {} -> {} ({:.0f},{:.0f}) {:.0f} y slot {} (zone {})",
-                    s.name(), TE::KindName(d.kind), d.x, d.y, std::hypot(d.x - bx, d.y - by), slot, s.zone_id());
-    return true;
+    return TakeErrand(s, st, dests[size_t(k)], leaving, now_ms);
 }
 
-// At the place: face the NPC, sell the junk or repair at a vendor, one gesture now and then, and stop a few seconds.
+// A station of this focus type really stands within its spell-focus reach of the bot — the same check
+// idle:craft_skillup makes before a real cast (SPELL_FOCUS gameobject whose type and radius fit).
+static bool FocusInReach(BotSnapshotView const& s, uint32 focus_type)
+{
+    float bx = 0.f, by = 0.f, bz = 0.f;
+    s.position(bx, by, bz);
+    for (auto const& go : s.raw().world_objects.nearby_objects)
+    {
+        GameObjectTemplate const* info = sObjectMgr->GetGameObjectTemplate(go.entry);
+        if (!info || info->type != GAMEOBJECT_TYPE_SPELL_FOCUS || uint32(info->GetSpellFocusType()) != focus_type)
+            continue;
+        float const dx = go.x - bx, dy = go.y - by, dz = go.z - bz;
+        float const r = float(info->GetSpellFocusRadius());
+        if (dx * dx + dy * dy + dz * dz <= r * r)
+            return true;
+    }
+    return false;
+}
+
+// The best recipe the bot knows for this station: needs this focus — or none, a no-station recipe casts
+// anywhere — still gives skill (orange over yellow over green), not on cooldown. Reagents are NOT part of the pick — the caller stocks the bags for the
+// chosen recipe (a worker's kit is conjured once per visit), so a recipe it knows always leads to a real cast.
+// 0 = no usable recipe at all — the station show then falls back to the work emote.
+// The station's own trade only: a smith at the anvil casts smithing, never the leatherworking she
+// also knows — the recipe needing no focus at all is not a license to work a foreign craft on this
+// fixture (a leatherwork anim at the anvil while the smithing kit clangs was the tell). Same
+// station -> skill mapping as CraftKindMatch.
+static bool StationSkillMatch(TE::Kind k, uint32 skill_line)
+{
+    switch (k)
+    {
+        case TE::Kind::Forge:    return skill_line == 164 || skill_line == 202 || skill_line == 186;
+        case TE::Kind::Cookfire: return skill_line == 185;
+        case TE::Kind::Loom:
+        case TE::Kind::Moonwell: return skill_line == 197;
+        default:                 return false;
+    }
+}
+
+static uint32 PickCraftSpell(BotSnapshotView const& s, uint32 focus_type, TE::Kind kind)
+{
+    if (!FocusInReach(s, focus_type))
+        return 0;
+    uint32      best = 0;
+    RecipeColor best_color = RecipeColor::Unknown;
+    uint16      best_skill = 0xFFFFu;
+    for (uint32 spell_id : s.raw().spellbook.known_recipes)
+    {
+        RecipeMeta const* meta = FindRecipeMeta(spell_id);
+        if (!meta || s.is_skill_capped(meta->skill_line_id)) continue;
+        if (!StationSkillMatch(kind, meta->skill_line_id)) continue;
+        SpellInfo const* si = sSpellMgr->GetSpellInfo(spell_id, DIFFICULTY_NONE);
+        if (!si) continue;
+        // The station's own focus — or none: vanilla recipes that need no station (the bolts,
+        // the bandages) cast fine standing anywhere, so a tailor at the loom works for real.
+        uint32 const need_focus = uint32(si->RequiresSpellFocus);
+        if (need_focus != 0 && need_focus != focus_type) continue;
+        uint16 const cur = s.skill_value(meta->skill_line_id);
+        RecipeColor const c = ResolveRecipeColor(spell_id, cur);
+        if (c == RecipeColor::Gray || c == RecipeColor::Unknown) continue;
+        // Cooldown only — NOT is_ready: is_ready folds in has_reagents, and
+        // missing reagents is precisely the case the caller conjures stock
+        // for. The other readiness gates (casting / GCD / moving) are
+        // re-checked on the cast beat itself.
+        if (s.cd_remaining(spell_id).count() > 0) continue;
+        bool const better = best == 0 || uint8(c) < uint8(best_color) || (c == best_color && cur < best_skill);
+        if (better) { best = spell_id; best_color = c; best_skill = cur; }
+    }
+    return best;
+}
+
+// The tool of the trade in hand while it works: a smith hammers with a hammer, not a sword and an empty fist.
+// The equip swap leaves the weapon in the tool's bag slot, so the same equip_item call in EndErrand puts the
+// battle kit back on. A bot set up before the tool grant (DoLearnProfessions) has the skill but no tool: it is
+// conjured into the bags once (a worker carries their own), and the next use-beat equips it.
+static uint32 StationToolEntry(TE::Kind kind, BotSnapshotView const& s)
+{
+    if (kind != TE::Kind::Forge) return 0;   // cookfire, loom, moonwell need no tool in vanilla
+    if (s.has_skill(164)) return 5956;       // Blacksmith Hammer
+    if (s.has_skill(202)) return 6219;       // Arclight Spanner
+    if (s.has_skill(186)) return 2901;       // Mining Pick — smelting
+    return 0;
+}
+
+// The one starter recipe a station's trade casts from conjured stock, taught lazily at the station via a
+// learn_spell intent — bots set up before DoLearnProfessions' grants (or whose grant missed) still craft
+// for real. Mirrors CraftKindMatch's station -> skill mapping.
+static uint32 StationRecipeEntry(TE::Kind kind, BotSnapshotView const& s)
+{
+    switch (kind)
+    {
+        case TE::Kind::Forge:
+            if (s.has_skill(164)) return 2660;   // Rough Sharpening Stone
+            if (s.has_skill(202)) return 3918;   // Rough Blasting Powder
+            if (s.has_skill(186)) return 2657;   // Smelt Copper
+            return 0;
+        case TE::Kind::Cookfire: return s.has_skill(185) ? 8604 : 0;   // Herb Baked Egg
+        case TE::Kind::Loom:     return s.has_skill(197) ? 2963 : 0;   // Bolt of Linen Cloth
+        case TE::Kind::Moonwell: return s.has_skill(197) ? 18560 : 0;  // Mooncloth
+        default:                  return 0;
+    }
+}
+
+enum class KitResult { Working, Ready, Abort };
+
+// The kit of the trade: the station's tool in the hand. The emit can't report an outcome — a refused
+// give or swap is invisible to the bot thread — so the bags are the truth: an item that left the bags
+// went into the hand (an equipment slot is not a bag), which is what confirms the swap, and an item
+// still in the bags means the last emit didn't land and goes out again. Full bags make the give
+// impossible outright: the worker goes to sell first (want_vendor steers the next errand to a vendor).
+static KitResult StationKit(BotSnapshotView const& s, BotIntentEmitter& emit, TE::State& st)
+{
+    uint32 const tool_entry = StationToolEntry(st.kind, s);
+    if (!tool_entry || st.tool_in_hand) return KitResult::Ready;
+    // Already in the hand — left on from an earlier visit's empty-mainhand end. Counts as a
+    // confirmed kit; without this the bags scan finds nothing and conjures a second tool.
+    if (s.raw().inventory.equipped.size() > EQUIPMENT_SLOT_MAINHAND &&
+        s.raw().inventory.equipped[EQUIPMENT_SLOT_MAINHAND].entry == tool_entry)
+    {
+        st.tool_in_hand = true;
+        emit.set_sheath(SHEATH_STATE_MELEE);
+        emit.emote_text("hefts their hammer.");   // debug anchor: the kit confirmed — the hand should show the tool now
+        return KitResult::Ready;
+    }
+    for (auto const& it : s.raw().inventory.bag_items)
+        if (it.entry == tool_entry)
+        {
+            // A swap is already in flight: only the tracked item counts — a second same-entry
+            // tool in the bags (or the swap-back's spare) must not keep re-triggering swaps.
+            if (st.tool_guid != 0)
+            {
+                if (it.guid.GetCounter() == st.tool_guid)
+                {
+                    if (emit.equip_item(it.bag, it.slot, EQUIPMENT_SLOT_MAINHAND))
+                    {
+                        st.tool_bag = it.bag;
+                        st.tool_slot = it.slot;
+                    }
+                    return KitResult::Working;
+                }
+                continue;   // not our tool — keep looking
+            }
+            if (emit.equip_item(it.bag, it.slot, EQUIPMENT_SLOT_MAINHAND))
+            {
+                st.tool_bag = it.bag;
+                st.tool_slot = it.slot;
+                st.tool_guid = it.guid.GetCounter();
+            }
+            return KitResult::Working;
+        }
+    if (st.tool_bag != 0xFF)   // a swap went out and the tool left the bags: it's the hand now
+    {
+        st.tool_in_hand = true;
+        emit.set_sheath(SHEATH_STATE_MELEE);   // hands stay sheathed at idle: draw the tool or the show looks empty-handed
+        emit.emote_text("hefts their hammer.");   // debug anchor: the kit confirmed — the hand should show the tool now
+        return KitResult::Ready;
+    }
+    if (s.bag_free_slots() < 2u)
+    {
+        // Nowhere for the kit to land — a worker with full bags sells before he stocks up.
+        st.want_vendor = true;
+        return KitResult::Abort;
+    }
+    if (emit.give_item(tool_entry))
+        TC_LOG_INFO("playerbot.v2", "[town] {} has no tool: item {} given for the {}", s.name(), tool_entry, TE::KindName(st.kind));
+    return KitResult::Working;
+}
+
+// A bot at a craft station "uses" it every 8-15 s of the linger: cast a known recipe that needs this focus when
+// it can (the real smith hammering is the most convincing look there is; CraftCast=0 turns that off), else hold
+// the looped work emote for the station.
+static void CraftUse(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& emit, TE::State& st, uint32 now_ms)
+{
+    // The kit comes first, on a quicker cadence than the use-beat: a give or swap the
+    // server refuses leaves no trace the bot thread can see, so each check retries the
+    // step that's still short. A few failures and the visit ends — a worker who can't
+    // get set up walks off; miming the station with empty hands was the tell.
+    if (!st.kit_ready)
+    {
+        if (now_ms < st.next_kit_ms) return;
+        st.next_kit_ms = now_ms + 2000u;
+        KitResult const kit = StationKit(s, emit, st);
+        TC_LOG_INFO("playerbot.v2", "[town-kit] {} attempt={} result={} kind={} guid={}", s.name(),
+            uint32(st.kit_attempts), kit == KitResult::Ready ? "ready" : kit == KitResult::Abort ? "abort" : "working",
+            TE::KindName(st.kind), st.tool_guid);
+        if (kit == KitResult::Ready)
+            st.kit_ready = true;
+        else if (kit == KitResult::Abort || ++st.kit_attempts >= 6u)
+        {
+            EndErrand(s, emit, st, false);
+            return;
+        }
+        else
+            return;   // the kit's still coming together — the work show waits for it
+    }
+    // The tool displaces the weapon for the whole visit: keep the upgrade rule off the mainhand
+    // the way the skillup path does — a staff swapped back in mid-hammer was the tell.
+    if (st.tool_guid != 0 || st.tool_in_hand)
+        ai.station_prop_extend(now_ms);
+    // The work sound while the emote loops: the kit is a one-shot, so re-push it on the animation's
+    // strike period (conf-tuned: the clang should land on the visible hit, a fixed period, no jitter).
+    if (st.work_emote && now_ms >= st.next_sound_ms)
+    {
+        static int32 const beat_ms = sConfigMgr->GetIntDefault("Playerbot.World.Town.CraftSoundBeatMs", 1000, true);
+        st.next_sound_ms = now_ms + uint32(beat_ms > 200 ? beat_ms : 200);
+        if (uint32 const kit = TE::SoundKitFor(TE::Cfg(), st.kind))
+            emit.emit(PlaySoundIntent{ kit });
+    }
+    if (now_ms < st.next_use_ms) return;
+    st.next_use_ms = now_ms + 8000u + uint32(ai.rng().int_range(0, 70)) * 100u;
+    // The work sound: the real cast carries whatever audio its visual kit owns, but the emote beats are
+    // silent — push the station's own tradeskill kit (anvil clang, pot, loom) to earshot once a beat.
+    if (uint32 const kit = TE::SoundKitFor(TE::Cfg(), st.kind))
+        emit.emit(PlaySoundIntent{ kit });
+    if (TE::Cfg().craft_cast)
+        if (uint32 const spell = PickCraftSpell(s, st.focus_type, st.kind))
+        {
+            if (s.has_reagents(spell))
+            {
+                if (s.is_ready(spell))
+                {
+                    if (st.work_emote)
+                    {
+                        emit.perform_emote(EMOTE_STATE_NONE);
+                        st.work_emote = false;
+                    }
+                    if (s.bot_id() % 16u == 0u)
+                        TC_LOG_INFO("playerbot.v2", "[town] {} crafts spell {} at the {}", s.name(), spell, TE::KindName(st.kind));
+                    emit.cast(spell);
+                    return;
+                }
+            }
+            // The stock of the trade: enough reagents for a few casts, conjured into the bags once per visit
+            // like the tool (a smith's bag holds the bars). What the visit leaves is the worker's kit — the
+            // next station visit casts with it; what it makes the bot sells at its next vendor stop.
+            else if (!st.stock_given)
+            {
+                bool all = true;
+                if (SpellInfo const* si = sSpellMgr->GetSpellInfo(spell, DIFFICULTY_NONE))
+                {
+                    for (uint8 r = 0; r < MAX_SPELL_REAGENTS; ++r)
+                        if (si->Reagent[r] > 0 && si->ReagentCount[r] > 0)
+                            all &= emit.give_item(uint32(si->Reagent[r]), uint16(si->ReagentCount[r] * 3u));
+                    if (s.bot_id() % 16u == 0u)
+                        TC_LOG_INFO("playerbot.v2", "[town] {} stocked for spell {} at the {}", s.name(), spell, TE::KindName(st.kind));
+                }
+                else
+                    all = true;   // unknown spell — don't retry every beat
+                st.stock_given = all;   // a full intent queue just retries next beat
+            }
+            // This beat falls to the emote; the next one has the stock and casts for real.
+        }
+        // No usable recipe for this station: teach the starter once per visit. Covers bots set up
+        // before DoLearnProfessions' grants — the recipe lands next drain and the next beat picks it.
+        else if (!st.recipe_given)
+            if (uint32 const recipe = StationRecipeEntry(st.kind, s))
+                // Once per visit either way: a recipe already in the book is why the pick came
+                // back empty (grey-capped or on cooldown) — nothing to teach it then.
+                st.recipe_given = s.knows_spell(recipe) ? true : emit.learn_spell(recipe);
+    if (!st.work_emote)
+        if (uint32 const e = TE::WorkEmoteFor(st.kind))
+        {
+            emit.perform_emote(e);
+            st.work_emote = true;
+        }
+}
+
+// Half-way through a long stop at a banker or auctioneer the bot faces the NPC once more and talks at it —
+// the "still doing business" tell of a player paging through bags at the counter.
+static void FidgetAt(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& emit, TE::State& st, uint32 now_ms)
+{
+    if (!st.entry || !st.next_use_ms || now_ms < st.next_use_ms) return;
+    st.next_use_ms = 0;   // once per stay
+    for (auto const& u : s.nearby_friends())
+    {
+        if (u.is_player || u.entry != st.entry || std::hypot(u.x - st.nx, u.y - st.ny) > 15.0f) continue;
+        emit.face_target(u.guid);
+        if (ai.rng().chance(0.5))
+        {
+            static constexpr uint32 kTalk[] = { EMOTE_ONESHOT_TALK, EMOTE_ONESHOT_TALK, EMOTE_ONESHOT_QUESTION, EMOTE_ONESHOT_POINT };
+            emit.perform_emote(kTalk[ai.rng().int_range(0, int32(std::size(kTalk)))], u.guid);
+        }
+        break;
+    }
+}
+
+// At the place: face the NPC, sell the junk or repair at a vendor, one gesture now and then, and stop a while —
+// how long depends on the place: an errand is seconds, the bank or the auction house half a minute, working at a
+// craft station a minute or so (Playerbot.World.Town.Linger*Sec).
 static void ArriveErrand(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& emit, TE::State& st, uint32 now_ms)
 {
     float bx, by, bz;
@@ -1140,10 +1523,10 @@ static void ArriveErrand(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& 
             emit.face_target(u.guid);
             uint64 const low = u.guid.GetCounter();
             bool const in_reach = std::hypot(u.x - bx, u.y - by) <= 5.0f;
-            if (in_reach && (u.npc_flags & UNIT_NPC_FLAG_VENDOR_MASK) && HasGreyJunkItem(s)
+            if (in_reach && (u.npc_flags & UNIT_NPC_FLAG_VENDOR_MASK)
                 && !ai.action_recently_tried(BotAI::ActionKind::SellTrash, low, now_ms))
             {
-                emit.vendor_sell_trash(u.guid);
+                emit.vendor_sell_trash(u.guid);   // junk AND craft surplus — sell_trash decides what moves
                 ai.note_action_retry(BotAI::ActionKind::SellTrash, low, now_ms);
             }
             if (in_reach && (u.npc_flags & UNIT_NPC_FLAG_REPAIR) && s.lowest_equipped_durability_pct() < 100 && s.gold() > 0
@@ -1161,14 +1544,39 @@ static void ArriveErrand(BotSnapshotView const& s, BotAI& ai, BotIntentEmitter& 
         }
     }
     auto const& c = TE::Cfg();
-    uint32 linger = c.linger_min_ms;
-    if (c.linger_max_ms > c.linger_min_ms)
-        linger += uint32(ai.rng().int_range(0, int32((c.linger_max_ms - c.linger_min_ms) / 100u) + 1)) * 100u;
+    uint32 lmin = 0, lmax = 0;
+    TE::LingerRange(c, st.kind, lmin, lmax);
+    uint32 linger = lmin;
+    if (lmax > lmin)
+        linger += uint32(ai.rng().int_range(0, int32((lmax - lmin) / 100u) + 1)) * 100u;
     if (st.kind == TE::Kind::Exit || st.kind == TE::Kind::Mailbox) linger /= 2u;   // a look out of the gate, a letter posted
     st.phase = 2;
     st.phase_start_ms = now_ms;
     st.linger_until_ms = now_ms + linger;
     st.near_player_ms = 0;
+    // The first "use the place" beat: a craft station's first cast or work emote lands a breath after arrival; a
+    // bank or auction-house stop repeats the face-and-talk gesture about halfway through the linger.
+    if (TE::IsCraftKind(st.kind))
+    {
+        // Right at the station and turned to it: the nearest gameobject of the station's focus type is the anvil
+        // the bot works at (face_target resolves gameobjects — the same SetFacingToObject the spell path uses).
+        ObjectGuid station;
+        float best_d2 = 12.0f * 12.0f;
+        for (auto const& go : s.raw().world_objects.nearby_objects)
+        {
+            GameObjectTemplate const* info = sObjectMgr->GetGameObjectTemplate(go.entry);
+            if (!info || uint32(info->GetSpellFocusType()) != st.focus_type) continue;
+            float const dx = go.x - st.nx, dy = go.y - st.ny;
+            float const d2 = dx * dx + dy * dy;
+            if (d2 < best_d2) { best_d2 = d2; station = go.guid; }
+        }
+        if (!station.IsEmpty())
+            emit.face_target(station);
+        st.next_kit_ms = now_ms;   // the kit run starts on the first linger tick: give -> swap -> confirm
+        st.next_use_ms = now_ms + 2000u + uint32(ai.rng().int_range(0, 20)) * 100u;
+    }
+    else if (st.entry)
+        st.next_use_ms = now_ms + linger / 2u;
     V2::TownLife::Counters().errands.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -1197,7 +1605,10 @@ bool TownErrandFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const
     auto& st = ai.town_errand();
     // An errand left long ago (a fight, a quest, a show took over) is not resumed: the next place is chosen from here.
     if (st.phase != 0 && now_ms - st.phase_start_ms > kErrandStaleMs)
-        EndErrand(s, st, false);
+        EndErrand(s, emit, st, false);
+
+    // Settle beat: a show that just ended stands a moment before the next errand starts.
+    if (int32(st.pause_until_ms - now_ms) > 0) return true;
 
     if (st.phase == 2)
     {
@@ -1206,10 +1617,14 @@ bool TownErrandFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const
         if (nudged) V2::TownLife::Counters().player_nudges.fetch_add(1, std::memory_order_relaxed);
         if (now_ms < st.linger_until_ms && !nudged)
         {
+            if (TE::IsCraftKind(st.kind))
+                CraftUse(s, ai, emit, st, now_ms);
+            else
+                FidgetAt(s, ai, emit, st, now_ms);
             ai.set_last_rule_fired("idle:town_linger");
             return true;
         }
-        EndErrand(s, st, true);   // done: straight on to the next place, this tick
+        EndErrand(s, emit, st, true);   // done: straight on to the next place, this tick
     }
 
     if (st.phase == 0 && !PickErrand(s, ai, st, now_ms))
@@ -1234,7 +1649,7 @@ bool TownErrandFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const
             V2::TownLife::Counters().errand_gave_up.fetch_add(1, std::memory_order_relaxed);
             if (s.bot_id() % 16u == 0u)
                 TC_LOG_INFO("playerbot.v2", "[town] {} gave up on the {} at ({:.0f},{:.0f}), {:.0f} y short", s.name(), TE::KindName(st.kind), st.nx, st.ny, d_npc);
-            EndErrand(s, st, false);
+            EndErrand(s, emit, st, false);
             return false;
         }
     }
@@ -1243,7 +1658,7 @@ bool TownErrandFire(BotSnapshotView const& s, BotAI& ai, GroupSnapshotView const
         // Out of the gate: no stop, the bot runs on to level (grind_roam, which lets it through the capital's edge until then).
         st.leave_until_ms = now_ms + kLeaveMs;
         V2::TownLife::Counters().errands.fetch_add(1, std::memory_order_relaxed);
-        EndErrand(s, st, true);
+        EndErrand(s, emit, st, true);
         return false;
     }
     if (there)

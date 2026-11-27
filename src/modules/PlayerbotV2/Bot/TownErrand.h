@@ -15,13 +15,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 namespace Playerbot::V2::TownErrand
 {
 
-enum class Kind : std::uint8_t { None = 0, Auction, Bank, Trainer, Inn, Mailbox, Flight, Vendor, Battlemaster, Stable, Exit };
+enum class Kind : std::uint8_t { None = 0, Auction, Bank, Trainer, Inn, Mailbox, Flight, Vendor, Battlemaster, Stable, Exit,
+                                 Forge, Cookfire, Loom, Moonwell };
 
 inline char const* KindName(Kind k)
 {
@@ -37,7 +39,49 @@ inline char const* KindName(Kind k)
         case Kind::Battlemaster: return "battlemaster";
         case Kind::Stable:       return "stable master";
         case Kind::Exit:         return "city gate";
+        case Kind::Forge:        return "forge";
+        case Kind::Cookfire:     return "cooking fire";
+        case Kind::Loom:         return "loom";
+        case Kind::Moonwell:     return "moonwell";
         default:                 return "-";
+    }
+}
+
+// A station a bot can pretend to work at (or really craft at), not an NPC errand.
+inline bool IsCraftKind(Kind k)
+{
+    return k == Kind::Forge || k == Kind::Cookfire || k == Kind::Loom || k == Kind::Moonwell;
+}
+
+// The SpellFocusObject.dbc name of a station's focus type -> its errand kind. Classification is by name, not id, so the
+// mapping survives the focus ids differing between cores and expansions. Kind::None = not a station we send bots to.
+inline Kind KindForFocusName(std::string_view name)
+{
+    char lower[64];
+    std::size_t const n = name.size() < sizeof(lower) - 1 ? name.size() : sizeof(lower) - 1;
+    for (std::size_t i = 0; i < n; ++i)
+        lower[i] = char(name[i] | 0x20);   // ASCII lowercase
+    lower[n] = '\0';
+    std::string_view const s(lower, n);
+    auto has = [&](std::string_view w) { return s.find(w) != std::string_view::npos; };
+    if (has("anvil") || has("forge") || has("smelt") || has("furnace")) return Kind::Forge;
+    if (has("cook") || has("stove") || has("bonfire") || has("campfire")) return Kind::Cookfire;
+    if (has("loom"))                                                     return Kind::Loom;
+    if (has("moonwell") || has("moon well"))                             return Kind::Moonwell;
+    return Kind::None;
+}
+
+// The looped "using the station" emote state played while lingering at a craft kind when the bot has nothing it can
+// really craft (EMOTE_STATE_* ids; a real craft cast overrides this). Kind::None callers get 0.
+inline std::uint32_t WorkEmoteFor(Kind k)
+{
+    switch (k)
+    {
+        case Kind::Forge:    return 173;   // EMOTE_STATE_WORK: hammering loop
+        case Kind::Cookfire: return 69;    // EMOTE_STATE_USE_STANDING: crouched at the fire
+        case Kind::Loom:     return 173;   // EMOTE_STATE_WORK
+        case Kind::Moonwell: return 68;    // EMOTE_STATE_KNEEL
+        default:             return 0;
     }
 }
 
@@ -45,13 +89,16 @@ struct Dest
 {
     Kind          kind = Kind::None;
     std::uint64_t key = 0;        // the NPC or mailbox spawn id; for the gate, a fixed key
-    std::uint32_t entry = 0;      // creature entry, to face the live NPC on arrival (0 = a mailbox or the gate)
+    std::uint32_t entry = 0;      // creature entry, to face the live NPC on arrival (0 = a mailbox, station or the gate)
     float         x = 0.f, y = 0.f, z = 0.f;
     float         weight = 0.f;   // how much this place draws a bot right now (BaseWeight, raised by a need)
+    std::uint32_t focus_type = 0; // craft kinds only: the station's SpellFocusObject id, to match recipes against
+    float         orientation = -1.f; // NPC kinds: the spawn's facing — the customer side for StandPoint (-1 = none)
 };
 
 // How much each kind of place draws a resident. The bank and the auction house are where a city's crowd is; a bot's own trainer and
-// the flight master are errands with a purpose; vendors are many, so each draws little.
+// the flight master are errands with a purpose; vendors are many, so each draws little. The craft stations draw little on their
+// own — the fixture steering (Playerbot.World.Town.Fixture.*) is what keeps them occupied, not the roll.
 inline float BaseWeight(Kind k)
 {
     switch (k)
@@ -66,6 +113,10 @@ inline float BaseWeight(Kind k)
         case Kind::Battlemaster: return 1.5f;
         case Kind::Stable:       return 1.5f;
         case Kind::Exit:         return 2.0f;
+        case Kind::Forge:        return 1.0f;
+        case Kind::Cookfire:     return 0.8f;
+        case Kind::Loom:         return 0.3f;
+        case Kind::Moonwell:     return 0.3f;
         default:                 return 0.0f;
     }
 }
@@ -122,11 +173,15 @@ inline int Pick(std::vector<Dest> const& dests, float bx, float by, float max_ya
 
 // Where a bot stands at a place: on the side it comes from, at `ring` yards, turned by its slot so the bots at one place stand side by
 // side instead of on one point. `slot` 0.. (the order the place was claimed in).
-inline void StandPoint(float px, float py, float bx, float by, float ring, std::uint32_t slot, float& sx, float& sy)
+// The point on the place's ring a bot stands at. `face` is the direction the place faces its customers
+// (an NPC's spawn orientation — a banker faces the queue, an auctioneer the hall); a negative value is
+// none, and the near side to the walking bot is used (right for a round prop: mailbox, anvil, gate).
+inline void StandPoint(float px, float py, float bx, float by, float ring, std::uint32_t slot, float& sx, float& sy,
+                       float face = -100.0f)
 {
     float const dx = bx - px, dy = by - py, len = std::hypot(dx, dy);
-    float base = len > 0.5f ? std::atan2(dy, dx) : 0.0f;
-    // 0, +0.55, -0.55, +1.1, -1.1 ... radians: a fan on the near side
+    float base = face >= 0.0f ? face : (len > 0.5f ? std::atan2(dy, dx) : 0.0f);
+    // 0, +0.55, -0.55, +1.1, -1.1 ... radians: a fan on the facing side
     float const step = float((slot + 1u) / 2u) * 0.55f;
     base += (slot % 2u) ? step : -step;
     sx = px + std::cos(base) * ring;
@@ -244,9 +299,26 @@ struct State
     bool          issued = false;                 // the move to the place has gone out
     bool          leaving = false;                // this errand is the walk out of the city (the bot's town time is over)
     std::uint32_t leave_until_ms = 0;             // out at the gate: no errands, the bot heads off to level until then
+    std::uint32_t focus_type = 0;                 // craft kinds: the station's SpellFocusObject id, for matching recipes
+    std::uint32_t next_use_ms = 0;                // the next "use the place" beat (craft cast, work emote, mid-linger fidget)
+    bool          work_emote = false;             // a looped work emote is up: clear it when the errand ends
+    std::uint32_t next_sound_ms = 0;              // next one-shot sound push while the work emote loops
+    std::uint8_t  tool_bag = 0xFF;                // the bag slot the profession tool came out of for the station show
+    std::uint8_t  tool_slot = 0xFF;               // (the swap put the weapon there: equipping it back restores the kit)
+    std::uint64_t tool_guid = 0;                  // the swap's item (raw guid) — two same-entry tools (one equipped, one bagged) ping-pong forever on entry matching alone
+    bool          kit_ready = false;              // the kit is confirmed: the tool's in hand, or the station needs none
+    bool          tool_in_hand = false;           // the swap landed — the tool was seen leaving the bags, not just pushed
+    std::uint8_t  kit_attempts = 0;               // failed acquisition checks — a few and the visit is abandoned
+    std::uint32_t next_kit_ms = 0;                // the next kit check (a quicker cadence than the use-beat)
+    bool          stock_given = false;            // reagents for the recipe were conjured once this errand
+    bool          recipe_given = false;           // the station's starter recipe was taught once this errand (pre-pipeline bots)
+    bool          want_vendor = false;            // a kit visit that couldn't start (full bags) steers the next errand to a vendor
+    std::uint32_t pause_until_ms = 0;             // settle beat set by EndErrand after Clear: stand a moment before the next pick walks off (no mid-swing slide)
     Recent        recent;
 
-    void Clear() { kind = Kind::None; key = 0; place = 0; entry = 0; phase = 0; near_player_ms = 0; issued = false; leaving = false; prog_ms = 0; }
+    // want_vendor outlives the errand that set it — it's the reason for the next one.
+    void Clear() { kind = Kind::None; key = 0; place = 0; entry = 0; phase = 0; near_player_ms = 0; issued = false; leaving = false; prog_ms = 0;
+                   focus_type = 0; next_use_ms = 0; work_emote = false; next_sound_ms = 0; tool_bag = tool_slot = 0xFF; tool_guid = 0; kit_ready = false; tool_in_hand = false; kit_attempts = 0; next_kit_ms = 0; stock_given = false; recipe_given = false; pause_until_ms = 0; }
 };
 
 // Has the walking bot stopped getting closer? It counts as progress to move `yards` in `window_ms`.

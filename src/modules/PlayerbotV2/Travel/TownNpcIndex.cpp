@@ -1,5 +1,6 @@
 #include "TownNpcIndex.h"
 
+#include "Bot/TownErrand.h"
 #include "CreatureData.h"
 #include "GameObjectData.h"
 #include "DB2Stores.h"
@@ -9,11 +10,14 @@
 #include "SpawnData.h"
 #include "UnitDefines.h"
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <limits>
 
 namespace Playerbot::V2::Travel {
+
+namespace TE = ::Playerbot::V2::TownErrand;
 
 namespace {
 
@@ -37,6 +41,16 @@ bool Hostile(FactionTemplateEntry const* npc, FactionTemplateEntry const* player
     if (!npc || !player)
         return false;
     return npc->IsHostileTo(player) || player->IsHostileTo(npc);
+}
+
+// The DBC name of a spell-focus type ("Anvil", "Cooking Fire", ...), or "" for
+// an id the client's SpellFocusObject table does not carry.
+char const* FocusName(uint32 focus_type)
+{
+    if (SpellFocusObjectEntry const* e = sSpellFocusObjectStore.LookupEntry(focus_type))
+        if (char const* n = e->Name[LOCALE_enUS])
+            return n;
+    return "";
 }
 
 } // namespace
@@ -85,6 +99,7 @@ void TownNpcIndex::Initialize()
         n.z             = data.spawnPoint.GetPositionZ();
         n.npc_flags     = flags;
         n.trainer_class = uint8(tmpl->trainer_class);
+        n.orientation   = data.spawnPoint.GetOrientation();
         n.alliance_ok   = ft && !Hostile(ft, alliance);
         n.horde_ok      = ft && !Hostile(ft, horde);
         if (!n.alliance_ok && !n.horde_ok)
@@ -100,6 +115,7 @@ void TownNpcIndex::Initialize()
     }
 
     size_t mailboxes = 0;
+    std::array<uint32, 4> focus_counts{};   // forge, cookfire, loom, moonwell — for the boot log
     for (auto const& [spawnId, data] : sObjectMgr->GetAllGameObjectData())
     {
         MapEntry const* map = sMapStore.LookupEntry(data.mapId);
@@ -108,7 +124,30 @@ void TownNpcIndex::Initialize()
         if (data.spawnGroupData && (data.spawnGroupData->flags & SPAWNGROUP_FLAG_MANUAL_SPAWN))
             continue;
         GameObjectTemplate const* tmpl = sObjectMgr->GetGameObjectTemplate(data.id);
-        if (!tmpl || tmpl->type != GAMEOBJECT_TYPE_MAILBOX)
+        if (!tmpl)
+            continue;
+        if (tmpl->type == GAMEOBJECT_TYPE_MAILBOX)
+        {
+            TownNpc n;
+            n.spawn_id    = spawnId;
+            n.entry       = data.id;
+            n.map_id      = data.mapId;
+            n.x           = data.spawnPoint.GetPositionX();
+            n.y           = data.spawnPoint.GetPositionY();
+            n.z           = data.spawnPoint.GetPositionZ();
+            n.alliance_ok = n.horde_ok = true;
+            _mail[n.map_id].push_back(n);
+            ++mailboxes;
+            continue;
+        }
+        // A craft station: any gameobject carrying a spell focus (anvils,
+        // forges, cooking fires, looms, moonwells). GetSpellFocusType also
+        // covers UI_LINK objects that carry one.
+        uint32 const focus_type = tmpl->GetSpellFocusType();
+        if (!focus_type)
+            continue;
+        TE::Kind const fk = TE::KindForFocusName(FocusName(focus_type));
+        if (fk == TE::Kind::None)
             continue;
         TownNpc n;
         n.spawn_id    = spawnId;
@@ -117,13 +156,21 @@ void TownNpcIndex::Initialize()
         n.x           = data.spawnPoint.GetPositionX();
         n.y           = data.spawnPoint.GetPositionY();
         n.z           = data.spawnPoint.GetPositionZ();
+        n.focus_type  = focus_type;
+        n.focus_kind  = uint8(fk);
         n.alliance_ok = n.horde_ok = true;
-        _mail[n.map_id].push_back(n);
-        ++mailboxes;
+        _focus[n.map_id].push_back(n);
+        if (fk == TE::Kind::Forge)    ++focus_counts[0];
+        if (fk == TE::Kind::Cookfire) ++focus_counts[1];
+        if (fk == TE::Kind::Loom)     ++focus_counts[2];
+        if (fk == TE::Kind::Moonwell) ++focus_counts[3];
     }
 
     _initialized.store(true, std::memory_order_release);
     TC_LOG_INFO("playerbot.v2", "[TownNpcIndex] {} mailbox objects.", mailboxes);
+    TC_LOG_INFO("playerbot.v2", "[TownNpcIndex] {} craft stations (forge {}, cookfire {}, loom {}, moonwell {}).",
+        focus_counts[0] + focus_counts[1] + focus_counts[2] + focus_counts[3],
+        focus_counts[0], focus_counts[1], focus_counts[2], focus_counts[3]);
     TC_LOG_INFO("playerbot.v2", "[TownNpcIndex] {} service NPC spawns on {} open-world maps in {} ms.",
         _count, _maps.size(),
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
@@ -227,6 +274,23 @@ void TownNpcIndex::ForEachMailboxNear(uint32 map, float x, float y, float radius
         return;
     auto it = _mail.find(map);
     if (it == _mail.end())
+        return;
+    const float r2 = radius * radius;
+    for (TownNpc const& n : it->second)
+    {
+        const float dx = n.x - x, dy = n.y - y;
+        if (dx * dx + dy * dy <= r2)
+            fn(n);
+    }
+}
+
+void TownNpcIndex::ForEachFocusNear(uint32 map, float x, float y, float radius,
+                                    std::function<void(TownNpc const&)> const& fn) const
+{
+    if (!_initialized.load(std::memory_order_acquire))
+        return;
+    auto it = _focus.find(map);
+    if (it == _focus.end())
         return;
     const float r2 = radius * radius;
     for (TownNpc const& n : it->second)

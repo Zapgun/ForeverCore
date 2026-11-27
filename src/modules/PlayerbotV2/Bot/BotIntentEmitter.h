@@ -158,6 +158,7 @@ public:
     bool dismiss_pet() { return emit(DismissPetIntent{}); }
     bool sit()  { return emit(SetStandStateIntent{1}); }
     bool stand(){ return emit(SetStandStateIntent{0}); }
+    bool set_sheath(uint8 sheath, int8_t hold = -1) { return emit(SetSheathIntent{sheath, hold}); }
     // clear_generators=true tears down stale MotionMaster generators (not just
     // the active spline) — see StopMovementIntent. Use it when a movement
     // target may have outlived its validity (e.g. on a cross-map teleport).
@@ -468,6 +469,10 @@ public:
     { return emit(VendorIntent{VendorBuyByCategoryIntent{vendor, item_class, item_subclass, total_count}}); }
     bool equip_item(uint8 from_bag, uint8 from_slot, uint8 to_slot)
     { return emit(EquipItemIntent{from_bag, from_slot, to_slot}); }
+    bool give_item(uint32 entry, uint16 count = 1)
+    { return emit(GiveItemIntent{entry, count}); }
+    bool learn_spell(uint32 spell_id)
+    { return emit(LearnSpellIntent{spell_id}); }
 
     // Mana break: a mana item is due but a cast is running. Until the item goes out (or 4 s pass) cast()/cast_rank() refuse any
     // spell with a cast time, so the running cast is the last one and the next tick can use the item.
