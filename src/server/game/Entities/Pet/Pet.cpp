@@ -497,6 +497,12 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
                 SetPower(POWER_MANA, savedmana);
         }
 
+        // Focus is never persisted (the save slots carry health and mana/happiness only), so a
+        // focus-using pet would arrive empty and visibly climb on every login or teleport. It is
+        // a fast out-of-combat regen resource: the pet arrives combat-ready instead.
+        if (GetPowerType() == POWER_FOCUS)
+            SetFullPower(POWER_FOCUS);
+
         // Dressing is complete: only now does the pet enter the world, fully loaded. Players never
         // see a pet without its auras, spells and passives.
         map->AddToMap(ToCreature());
