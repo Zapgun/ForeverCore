@@ -1567,20 +1567,23 @@ void Guardian::UpdateResistances(uint32 school)
 
 void Guardian::UpdateArmor()
 {
-    float baseValue = 0.0f;
-    float value = 0.0f;
-    float bonus_armor = 0.0f;
     UnitMods unitMod = UNIT_MOD_ARMOR;
+
+    // Same math as Player::UpdateArmor and Creature::UpdateArmor: the full total must land in the main armor field - it is
+    // what GetArmor() (combat damage reduction) reads and what the character sheet displays. Writing only BASE_VALUE there
+    // shunted every TOTAL_VALUE contribution (trained Natural Armor ranks, owner-scaling pass-through) into the unread
+    // bonus field.
+    float value = GetFlatModifierValue(unitMod, BASE_VALUE);
+    value *= GetPctModifierValue(unitMod, BASE_PCT);
+
+    float baseValue = value;
+
+    value += GetFlatModifierValue(unitMod, TOTAL_VALUE);
+    value *= GetPctModifierValue(unitMod, TOTAL_PCT);
 
     // Classic 1.60 (vanilla): pets do not inherit their owner's armor
 
-    value  = GetFlatModifierValue(unitMod, BASE_VALUE);
-    baseValue = value;
-    value *= GetPctModifierValue(unitMod, BASE_PCT);
-    value += GetFlatModifierValue(unitMod, TOTAL_VALUE) + bonus_armor;
-    value *= GetPctModifierValue(unitMod, TOTAL_PCT);
-
-    SetArmor(int32(baseValue), int32(value - baseValue));
+    SetArmor(int32(value), int32(value - baseValue));
 }
 
 void Guardian::UpdateMaxHealth()
