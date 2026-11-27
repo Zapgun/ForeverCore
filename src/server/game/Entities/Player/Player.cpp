@@ -13863,9 +13863,11 @@ void Player::SwapItem(uint16 src, uint16 dst)
     }
 
     // prevent equipping bag in the same slot from its inside
+    // (swapping a bag with one of its contents would leave the non-empty bag inside another bag,
+    // which is also the message the client shows for EQUIP_ERR_BAG_IN_BAG)
     if (IsBagPos(dst) && srcbag == dstslot)
     {
-        SendEquipError(EQUIP_ERR_CANT_SWAP, pSrcItem, pDstItem);
+        SendEquipError(EQUIP_ERR_BAG_IN_BAG, pSrcItem, pDstItem);
         return;
     }
 
@@ -14050,20 +14052,29 @@ void Player::SwapItem(uint16 src, uint16 dst)
             return;
         }
 
-        // Items exchange, packed at the start of the new bag
-        count = 0;                                      // will pos in new bag
-        for (uint32 i = 0; i < fullBag->GetBagSize(); ++i)
+        // Items exchange in reverse order: an item keeps its original slot when that slot exists in
+        // the new bag and nothing ahead of it had to move (write cursor at or past its index); items
+        // past the end of a smaller bag backfill from the top, preserving the relative order of everything
+        int32 writeSlot = int32(emptyBag->GetBagSize()) - 1;
+        for (int32 i = int32(fullBag->GetBagSize()) - 1; i >= 0; --i)
         {
-            Item* bagItem = fullBag->GetItemByPos(i);
+            Item* bagItem = fullBag->GetItemByPos(uint8(i));
             if (!bagItem)
                 continue;
 
-            fullBag->RemoveItem(i, true);
-            emptyBag->StoreItem(count, bagItem, true);
-            bagItem->SetState(ITEM_CHANGED, this);
-            exchangedItems.emplace_back(bagItem, i);
+            uint8 targetSlot;
+            if (i <= writeSlot)
+                targetSlot = uint8(i);              // slot exists in the new bag and is still free
+            else
+            {
+                targetSlot = uint8(writeSlot);      // displaced past the end: backfill highest first
+                --writeSlot;
+            }
 
-            ++count;
+            fullBag->RemoveItem(uint8(i), true);
+            emptyBag->StoreItem(targetSlot, bagItem, true);
+            bagItem->SetState(ITEM_CHANGED, this);
+            exchangedItems.emplace_back(bagItem, uint8(i));
         }
     }
 
