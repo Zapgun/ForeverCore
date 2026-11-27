@@ -17,6 +17,7 @@
 #include "tc_catch2.h"
 
 #include "../../src/modules/PlayerbotV2/Bot/TownErrand.h"
+#include "../../src/modules/PlayerbotV2/Bot/TownErrandConfig.h"
 
 #include <cmath>
 #include <set>
@@ -103,6 +104,19 @@ TEST_CASE("Bots at one place stand side by side on the near side", "[ClassicTown
     REQUIRE(seen.size() == 5);
 }
 
+TEST_CASE("A place with a facing fans its bots out front; one without uses the approach side", "[ClassicTownErrand]")
+{
+    float sx, sy;
+    // A banker facing east (orientation 0): the queue stands in front, not behind.
+    StandPoint(0.f, 0.f, -50.f, 0.f, 4.f, 0, sx, sy, 0.0f);
+    REQUIRE(sx > 3.9f);
+    REQUIRE(std::fabs(sy) < 0.1f);
+    // No facing stored (-1 = none): the side the bot approaches from (+x) is used.
+    StandPoint(0.f, 0.f, 50.f, 0.f, 4.f, 0, sx, sy, -1.0f);
+    REQUIRE(sx > 3.9f);
+    REQUIRE(std::fabs(sy) < 0.1f);
+}
+
 TEST_CASE("A walk that stops getting closer is stalled after the window", "[ClassicTownErrand]")
 {
     State st;
@@ -111,4 +125,96 @@ TEST_CASE("A walk that stops getting closer is stalled after the window", "[Clas
     REQUIRE_FALSE(Stalled(st, 5.f, 0.f, 8000u));    // 5 y: progress, the clock restarts
     REQUIRE_FALSE(Stalled(st, 5.5f, 0.f, 15000u));
     REQUIRE(Stalled(st, 5.5f, 0.f, 16001u));
+}
+
+TEST_CASE("A station's SpellFocusObject name maps to its errand kind", "[ClassicTownErrand]")
+{
+    REQUIRE(KindForFocusName("Anvil") == Kind::Forge);
+    REQUIRE(KindForFocusName("Forge") == Kind::Forge);
+    REQUIRE(KindForFocusName("Smelter") == Kind::Forge);
+    REQUIRE(KindForFocusName("Furnace") == Kind::Forge);
+    REQUIRE(KindForFocusName("Cooking Fire") == Kind::Cookfire);
+    REQUIRE(KindForFocusName("Cooking Stove") == Kind::Cookfire);
+    REQUIRE(KindForFocusName("Bonfire") == Kind::Cookfire);
+    REQUIRE(KindForFocusName("Loom") == Kind::Loom);
+    REQUIRE(KindForFocusName("Mana Loom") == Kind::Loom);
+    REQUIRE(KindForFocusName("Moonwell") == Kind::Moonwell);
+    REQUIRE(KindForFocusName("Alchemy Lab") == Kind::None);      // needs no station in Classic
+    REQUIRE(KindForFocusName("Lexicon of Power") == Kind::None);
+    REQUIRE(KindForFocusName("") == Kind::None);                 // a focus id the client table does not name
+}
+
+TEST_CASE("The craft kinds are stations, with a work emote each", "[ClassicTownErrand]")
+{
+    REQUIRE(IsCraftKind(Kind::Forge));
+    REQUIRE(IsCraftKind(Kind::Cookfire));
+    REQUIRE(IsCraftKind(Kind::Loom));
+    REQUIRE(IsCraftKind(Kind::Moonwell));
+    REQUIRE_FALSE(IsCraftKind(Kind::Bank));
+    REQUIRE_FALSE(IsCraftKind(Kind::Mailbox));
+    REQUIRE(WorkEmoteFor(Kind::Forge) == 173);          // EMOTE_STATE_WORK
+    REQUIRE(WorkEmoteFor(Kind::Cookfire) == 69);        // EMOTE_STATE_USE_STANDING
+    REQUIRE(WorkEmoteFor(Kind::Moonwell) == 68);        // EMOTE_STATE_KNEEL
+    REQUIRE(WorkEmoteFor(Kind::Bank) == 0);
+    REQUIRE(std::string_view(KindName(Kind::Forge)) == "forge");
+    REQUIRE(std::string_view(KindName(Kind::Cookfire)) == "cooking fire");
+}
+
+TEST_CASE("The linger and the fixture a kind gets come from its config", "[ClassicTownErrand]")
+{
+    Config c;   // defaults: 20-40 s at the bank and the auction house, 45-90 s at a station
+    std::uint32_t lo = 0, hi = 0;
+    LingerRange(c, Kind::Vendor, lo, hi);
+    REQUIRE(lo == c.linger_min_ms);
+    REQUIRE(hi == c.linger_max_ms);
+    LingerRange(c, Kind::Bank, lo, hi);
+    REQUIRE(lo == 20000u);
+    REQUIRE(hi == 40000u);
+    LingerRange(c, Kind::Auction, lo, hi);
+    REQUIRE(lo == 20000u);
+    REQUIRE(hi == 40000u);
+    LingerRange(c, Kind::Forge, lo, hi);
+    REQUIRE(lo == 45000u);
+    REQUIRE(hi == 90000u);
+    LingerRange(c, Kind::Cookfire, lo, hi);
+    REQUIRE(lo == 45000u);
+    REQUIRE(hi == 90000u);
+    REQUIRE(FixtureTarget(c, Kind::Bank) == 3);
+    REQUIRE(FixtureTarget(c, Kind::Auction) == 3);
+    REQUIRE(FixtureTarget(c, Kind::Forge) == 2);
+    REQUIRE(FixtureTarget(c, Kind::Cookfire) == 1);
+    REQUIRE(FixtureTarget(c, Kind::Loom) == 0);        // off by default: rarely seen in Classic
+    REQUIRE(FixtureTarget(c, Kind::Vendor) == 0);      // no fixture for a plain errand
+}
+
+TEST_CASE("An errand that ends clears its craft-station state", "[ClassicTownErrand]")
+{
+    State st;
+    st.focus_type = 7;
+    st.next_use_ms = 12345u;
+    st.work_emote = true;
+    st.tool_bag = 1;
+    st.tool_slot = 4;
+    st.kit_ready = true;
+    st.tool_in_hand = true;
+    st.kit_attempts = 3;
+    st.next_kit_ms = 999u;
+    st.stock_given = true;
+    st.recipe_given = true;
+    st.want_vendor = true;
+    st.Clear();
+    REQUIRE(st.focus_type == 0);
+    REQUIRE(st.next_use_ms == 0);
+    REQUIRE_FALSE(st.work_emote);
+    // The tool swap is undone before Clear — the reset value is "no tool" (0xFF), not a bag slot.
+    REQUIRE(st.tool_bag == 0xFF);
+    REQUIRE(st.tool_slot == 0xFF);
+    REQUIRE_FALSE(st.kit_ready);
+    REQUIRE_FALSE(st.tool_in_hand);
+    REQUIRE(st.kit_attempts == 0);
+    REQUIRE(st.next_kit_ms == 0);
+    REQUIRE_FALSE(st.stock_given);
+    REQUIRE_FALSE(st.recipe_given);
+    // want_vendor outlives the errand that set it — it steers the next pick to a vendor.
+    REQUIRE(st.want_vendor);
 }
