@@ -151,7 +151,11 @@ void AuraApplication::_InitFlags(Unit* caster, uint32 effMask)
         return GetEffectsToApply() & (1 << effect->GetEffIndex()) && Aura::EffectTypeNeedsSendingAmount(effect->GetAuraType());
     };
 
+    // WoW Forever: owner-power-scaling auras (pet scaling passives) don't carry
+    // SPELL_ATTR8_AURA_POINTS_ON_CLIENT in their data — mark them scalable so BuildUpdatePacket
+    // ships effect Points, which the client needs to display inherited amounts
     if (GetBase()->GetSpellInfo()->HasAttribute(SPELL_ATTR8_AURA_POINTS_ON_CLIENT)
+        || GetBase()->GetSpellInfo()->HasAttribute(SPELL_ATTR4_OWNER_POWER_SCALING)
         || std::ranges::any_of(GetBase()->GetAuraEffects(), effectNeedsAmount))
         _flags |= AFLAG_SCALABLE;
 }

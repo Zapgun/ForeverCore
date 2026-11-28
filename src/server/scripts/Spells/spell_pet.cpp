@@ -135,6 +135,15 @@ class spell_gen_pet_calculate : public SpellScriptLoader
                 }
             }
 
+            // Forever classic merged crit: 100% of the master's higher melee/ranged crit (Oct 15 official change)
+            void CalculateAmountForeverCrit(AuraEffect const* /* aurEff */, SpellEffectValue& amount, bool& canBeRecalculated)
+            {
+                canBeRecalculated = true;
+                if (Player* owner = GetCaster() && GetCaster()->GetOwner() ? GetCaster()->GetOwner()->ToPlayer() : nullptr)
+                    amount += std::max(*owner->m_activePlayerData->CritPercentage, *owner->m_activePlayerData->RangedCritPercentage)
+                        * sWorld->getFloatConfig(CONFIG_CLASSIC_PET_SCALING_CRIT);
+            }
+
             void CalculateAmountMeleeHit(AuraEffect const* /* aurEff */, SpellEffectValue& amount, bool& /*canBeRecalculated*/)
             {
                 if (Player* owner = GetCaster()->GetOwner()->ToPlayer())
@@ -185,8 +194,9 @@ class spell_gen_pet_calculate : public SpellScriptLoader
                 switch (m_scriptSpellId)
                 {
                     case SPELL_TAMED_PET_PASSIVE_06:
-                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_gen_pet_calculate_AuraScript::CalculateAmountCritMelee, EFFECT_0, SPELL_AURA_MOD_WEAPON_CRIT_PERCENT);
-                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_gen_pet_calculate_AuraScript::CalculateAmountCritSpell, EFFECT_1, SPELL_AURA_MOD_SPELL_CRIT_CHANCE);
+                        // Forever classic data: EFFECT_0 is SPELL_AURA_MOD_CRIT_PCT (290), not MOD_WEAPON_CRIT_PERCENT —
+                        // merged crit feeds both the melee and spell rows of the pet sheet
+                        DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_gen_pet_calculate_AuraScript::CalculateAmountForeverCrit, EFFECT_0, SPELL_AURA_MOD_CRIT_PCT);
                         break;
                     case SPELL_PET_PASSIVE_CRIT:
                         DoEffectCalcAmount += AuraEffectCalcAmountFn(spell_gen_pet_calculate_AuraScript::CalculateAmountCritSpell, EFFECT_0, SPELL_AURA_MOD_SPELL_CRIT_CHANCE);
