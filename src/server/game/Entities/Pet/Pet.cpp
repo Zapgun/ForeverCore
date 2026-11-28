@@ -1514,8 +1514,14 @@ bool Guardian::InitStatsForLevel(uint8 petlevel)
         case SUMMON_PET:
         {
             // Classic 1.60 (vanilla): no bonus damage from the warlock's fire or shadow damage (The Burning Crusade)
-            SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, float(petlevel - (petlevel / 4)));
-            SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, float(petlevel + (petlevel / 4)));
+            // Classic 1.60: weapon damage comes from the client's ExpectedStat CreatureAutoAttackDps curve —
+            // whole average damage per second (x swing seconds = per-swing damage, so damage is normalized
+            // around attack speed); observed Forever pet sheets fit a 20% swing-to-swing variance
+            // (compare Creature::UpdateLevelDependantStats, VMaNGOS damage_variance)
+            float baseDps = sDB2Manager.EvaluateExpectedStat(ExpectedStatType::CreatureAutoAttackDps, petlevel, GetCreatureDifficulty()->GetHealthScalingExpansion(), m_unitData->ContentTuningID, Classes(cinfo->unit_class), 0);
+            float swingDamage = baseDps * attackTime / 1000.0f;
+            SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, swingDamage * 0.80f);
+            SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, swingDamage * 1.20f);
 
             //SetStatFlatModifier(UNIT_MOD_ATTACK_POWER, BASE_VALUE, float(cinfo->attackpower));
             break;
@@ -1523,11 +1529,18 @@ bool Guardian::InitStatsForLevel(uint8 petlevel)
         case HUNTER_PET:
         {
             ToPet()->SetPetNextLevelExperience(uint32(sObjectMgr->GetXPForLevel(petlevel)*PET_XP_FACTOR));
-            //these formula may not be correct; however, it is designed to be close to what it should be
-            //this makes dps 0.5 of pets level
-            SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, float(petlevel - (petlevel / 4)));
-            //damage range is then petlevel / 2
-            SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, float(petlevel + (petlevel / 4)));
+            // Classic 1.60: weapon damage comes from the client's ExpectedStat CreatureAutoAttackDps curve —
+            // whole average damage per second. Damage is normalized around attack speed: the swing the pet
+            // actually has through its Faster / Slower Attack passive is what converts dps to per-swing
+            // damage. Observed Forever pet sheets fit a 20% swing-to-swing variance
+            // (compare Creature::UpdateLevelDependantStats, VMaNGOS damage_variance)
+            float baseDps = sDB2Manager.EvaluateExpectedStat(ExpectedStatType::CreatureAutoAttackDps, petlevel, GetCreatureDifficulty()->GetHealthScalingExpansion(), m_unitData->ContentTuningID, Classes(cinfo->unit_class), 0);
+            float swingMs = float(attackTime);
+            if (ClassicPetAttackSpeed::Step const* step = ClassicPetAttackSpeed::ForWildAttackTime(cinfo->BaseAttackTime))
+                swingMs = ClassicPetAttackSpeed::SwingMs(step->pct);
+            float swingDamage = baseDps * swingMs / 1000.0f;
+            SetBaseWeaponDamage(BASE_ATTACK, MINDAMAGE, swingDamage * 0.80f);
+            SetBaseWeaponDamage(BASE_ATTACK, MAXDAMAGE, swingDamage * 1.20f);
             //damage is increased afterwards as strength and pet scaling modify attack power
             break;
         }
